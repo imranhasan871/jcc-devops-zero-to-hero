@@ -1,0 +1,24 @@
+# PriorityClass: jcc-critical (value 1000)
+# Assign to backend and database pods. Under resource pressure, the
+# scheduler will evict lower-priority pods (value 100) to make room
+# for pods with this class. This prevents a runaway batch job from
+# starving the production application of CPU/memory on shared clusters.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: jcc-critical
+value: 1000
+globalDefault: false
+description: "Critical JCC workloads (backend, database). Evicts standard pods under pressure."
+---
+# PriorityClass: jcc-standard (value 100)
+# Assign to non-critical workloads: batch jobs, background workers,
+# dev deployments. These will be evicted before jcc-critical pods
+# when the cluster is under resource pressure.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: jcc-standard
+value: 100
+globalDefault: false
+description: "Standard JCC workloads (workers, jobs, dev). Evicted before critical pods."

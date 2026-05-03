@@ -1,0 +1,22 @@
+# ResourceQuota for jcc-production namespace.
+# Prevents a single namespace from consuming all cluster resources.
+# In shared clusters a runaway Deployment (replicas: 1000) would otherwise
+# starve every other team. Once quota is set, any pod without explicit
+# resource requests/limits will be rejected by the API server.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: jcc-production-quota
+  namespace: jcc-production
+spec:
+  hard:
+    pods: "20"
+    deployments.apps: "10"
+    requests.cpu: "4"
+    requests.memory: "4Gi"
+    limits.cpu: "8"
+    limits.memory: "8Gi"
+    persistentvolumeclaims: "5"
+    requests.storage: "50Gi"
+    services: "10"
+    services.loadbalancers: "2"

@@ -1,87 +1,87 @@
-# Class 28 — Network Policies: Zero-Trust Networking
+# Class 29 — Pod Disruption Budgets + Priority Classes
 
 ## Objective
-Without NetworkPolicies every pod in a Kubernetes cluster can open a TCP connection to every
-other pod, in any namespace, on any port. A single compromised container — a misconfigured
-nginx, a vulnerable npm dependency with an RCE CVE — can reach your database directly.
-NetworkPolicies implement zero-trust networking at the pod level: deny everything by default,
-then allow only the exact communication paths your architecture requires.
+RBAC and NetworkPolicies protect you from attackers. PodDisruptionBudgets and PriorityClasses
+protect you from yourself — specifically from cluster operations (node drains, Kubernetes
+version upgrades, node pool replacements) and resource contention silently taking down
+production. These two primitives are the difference between a controlled maintenance window
+and a 3am incident page.
 
 ## Why This Matters in Production
-The 2019 Capital One breach was partially enabled by an SSRF vulnerability in a WAF that could
-reach the AWS metadata endpoint with no network restrictions. In Kubernetes terms: a pod with
-no NetworkPolicy can reach every other pod and every cloud metadata API without restriction.
-Zero-trust network segmentation is now an explicit requirement in PCI-DSS 4.0, SOC2 Type II,
-and HIPAA audits. Cilium and Calico — the two dominant CNI plugins — both enforce
-NetworkPolicies. Without a CNI that implements the enforcement, the objects exist but have no
-effect. This silent non-enforcement is one of the most dangerous Kubernetes misconfigurations.
+The most common Kubernetes-related outage story: an engineer runs `kubectl drain node-3` to
+replace the underlying EC2 instance. Kubernetes obediently evicts all pods on that node. If
+both backend replicas happened to be scheduled on node-3, the app goes completely down for the
+30–90 seconds it takes the replacement pods to start. With a PodDisruptionBudget set to
+`minAvailable: 1`, the drain blocks after evicting the first pod, outputs
+"Cannot evict pod as it would violate the pod's disruption budget," and waits for a
+replacement pod to reach Ready state on another node before evicting the second. Zero
+downtime. Same drain operation, completely different outcome.
 
 ## What You'll Learn
-- Why NetworkPolicies require a supporting CNI plugin (Calico, Cilium, Weave — not kubenet)
-- How ingress and egress rules are structured and combined
-- The critical difference between podSelector and namespaceSelector
-- Why default-deny-all is the correct starting point rather than the finishing point
-- How to debug blocked traffic using `kubectl exec` and `curl`/`nc`
-- How to allow cross-namespace traffic (Prometheus scraping, Ingress controller forwarding)
+- The difference between voluntary and involuntary disruptions
+- How node drain negotiates with PodDisruptionBudgets step by step
+- How PriorityClass affects scheduling and eviction when cluster resources are exhausted
+- How ResourceQuota prevents one namespace from starving others in a shared cluster
+- The traps: minAvailable == replicas, and ResourceQuota requiring explicit resource requests
 
 ## What Changed in This Class
-- `k8s/network-policies/default-deny-all.yaml` — denies all ingress and egress for every pod in jcc-production
-- `k8s/network-policies/allow-frontend-to-backend.yaml` — opens port 3001 from frontend pods only
-- `k8s/network-policies/allow-backend-to-db.yaml` — opens port 5432 from backend pods only
-- `k8s/network-policies/allow-prometheus-scrape.yaml` — allows monitoring namespace to scrape /metrics
-- `k8s/network-policies/allow-ingress-to-frontend.yaml` — allows ingress-nginx namespace to reach frontend
-- `Makefile` — added netpol-apply and netpol-verify targets
+- `k8s/reliability/pdb-backend.yaml` — PDB ensuring at least 1 backend pod survives any voluntary drain
+- `k8s/reliability/pdb-database.yaml` — PDB protecting the PostgreSQL pod from concurrent eviction
+- `k8s/reliability/priority-classes.yaml` — jcc-critical (1000) and jcc-standard (100) PriorityClasses
+- `k8s/reliability/resource-quota.yaml` — hard namespace-level limits on pods, CPU, memory, and PVCs
+- `k8s/backend/deployment.yaml` — added `priorityClassName: jcc-critical`
+- `Makefile` — added reliability-apply and reliability-status targets
 
 ## Concept Deep Dive
 
-**CNI requirement** — NetworkPolicy objects are plain Kubernetes API resources. They store
-your intent but do nothing by themselves. Enforcement is done by the CNI plugin running on
-every node. If your cluster uses the default kubenet CNI (common on older setups) or flannel,
-NetworkPolicy objects are silently ignored — no error, no warning, no enforcement. Always
-verify: apply a deny policy and test that a connection that should be blocked actually times
-out. On minikube: `minikube start --cni=calico`. On EKS: use the AWS VPC CNI with Calico, or
-deploy Cilium as a replacement CNI.
+**Voluntary vs Involuntary disruptions** — A voluntary disruption is one a human or controller
+initiates: `kubectl drain`, a managed node group rolling update, a Cluster Autoscaler
+scale-down, a Deployment rollout, a manual pod delete. Kubernetes honours PodDisruptionBudgets
+for voluntary disruptions — it will delay the operation until the budget permits. An
+involuntary disruption is hardware failure, OOM kill, or node crash — Kubernetes cannot
+negotiate these, so PDBs do not apply. For involuntary protection you need replicas spread
+across availability zones using pod anti-affinity rules and topology spread constraints.
 
-**podSelector vs namespaceSelector** — A podSelector matches pods by label within the same
-namespace as the NetworkPolicy. A namespaceSelector matches all pods in namespaces bearing
-that label. When both appear in the same `from` list entry they are ANDed: the source must be
-a pod matching the podSelector AND in a namespace matching the namespaceSelector. When they
-appear as separate list entries they are ORed: any pod matching either condition is allowed.
-Getting this wrong is silent and can result in over-permissive rules that never get caught.
+**PriorityClass under resource pressure** — When a new pod cannot be scheduled because the
+cluster has insufficient free resources, the Kubernetes scheduler looks for running pods it can
+preempt (evict) to make room. Pods with PriorityClass value 1000 will displace pods with value
+100. This mechanism ensures your production backend always gets scheduled even when a developer
+has left a 50-replica load-testing job running. Without PriorityClasses all pods compete
+equally — first-come, first-served — which works fine until it doesn't.
 
-**Default-deny-all as starting point** — The instinct is to start open and add restrictions
-later. This is backwards for security: you will always miss something. Start with
-default-deny-all, then add explicit allow rules for each path you have intentionally designed.
-This forces you to think about every communication dependency before it can receive traffic.
-It also makes your network topology self-documenting: the allow policies are a
-machine-enforced, version-controlled architecture diagram of your actual traffic flows.
+**ResourceQuota as a safety net** — ResourceQuota adds hard ceilings on the entire namespace.
+A `kubectl scale deployment backend --replicas=1000` is rejected when the `pods: 20` quota is
+hit. A deployment that sets `limits.memory: 32Gi` per pod is rejected against the namespace
+memory quota. This is correct: the quota is the last line of defence against misconfigurations
+that would exhaust shared cluster capacity. It requires that every pod in the namespace has
+explicit resource requests and limits — which is itself a healthy forcing function.
 
 ## Hands-On Exercise
-1. Verify Calico is running: `kubectl get pods -n kube-system | grep calico`
-   (For minikube: `minikube start --cni=calico` first)
-2. Apply default-deny first: `kubectl apply -f k8s/network-policies/default-deny-all.yaml`
-3. Verify everything is blocked:
-   `kubectl exec -it <backend-pod> -n jcc-production -- curl --max-time 3 http://database-service:5432`
-   Expected: connection refused or timeout
-4. Apply all allow policies: `make netpol-apply`
-5. Verify backend can reach DB again with the same curl command
-6. List all policies: `kubectl get networkpolicies -n jcc-production`
-7. Run `make netpol-verify`
+1. Apply reliability resources: `make reliability-apply`
+2. Check PDB status: `kubectl get pdb -n jcc-production`
+   Expected: `ALLOWED DISRUPTIONS: 1` for the backend PDB (with 2 replicas)
+3. Simulate controlled drain: `kubectl drain <node> --ignore-daemonsets --delete-emptydir-data`
+   Observe: it evicts pod 1, waits for replacement, then evicts pod 2
+4. Check quota usage: `kubectl describe resourcequota jcc-production-quota -n jcc-production`
+5. Try to exceed quota: `kubectl scale deployment backend --replicas=25 -n jcc-production`
+   Expected: `Error from server (Forbidden): exceeded quota`
+6. Check priority classes: `kubectl get priorityclasses`
 
 ## Common Mistakes
-1. **Applying NetworkPolicies on a cluster without an enforcing CNI** — The policies appear
-   to succeed (`kubectl apply` exits 0) but no traffic is blocked. Always test enforcement
-   explicitly: apply a deny policy and prove a connection that should fail actually fails.
-2. **Only specifying `policyTypes: [Ingress]`** — This leaves egress unrestricted. A
-   compromised pod can still exfiltrate data outbound, reach cloud metadata endpoints, or
-   call external C2 servers. The default-deny-all in this class explicitly blocks both
-   Ingress and Egress — always name both types when you mean to restrict both.
-3. **AND vs OR confusion in `from` lists** — Two selectors in one `from` entry are ANDed.
-   Two separate entries are ORed. `from: [{namespaceSelector: X, podSelector: Y}]` means
-   pods matching Y in namespaces matching X. `from: [{namespaceSelector: X}, {podSelector: Y}]`
-   means pods in namespaces matching X OR pods matching Y anywhere. The first form is almost
-   always what you want for cross-namespace allow rules.
+1. **Setting `minAvailable` equal to `replicaCount`** — If `minAvailable: 2` and you have
+   2 replicas, zero pods can ever be voluntarily evicted. Node drains block indefinitely with
+   no progress. Set minAvailable to `replicas - 1`, or use `maxUnavailable: 1` instead.
+   Always leave room for at least one voluntary disruption.
+2. **Applying PDBs to single-replica Deployments** — A PDB with `minAvailable: 1` on a
+   Deployment with `replicas: 1` means no pods can ever be evicted voluntarily. Maintenance
+   operations block forever. Scale to at least 2 replicas before adding a PDB, or accept that
+   single-replica workloads will have maintenance downtime.
+3. **Applying ResourceQuota without setting resource requests on existing pods** — Once a
+   quota with CPU/memory limits is applied, any pod without explicit `resources.requests` is
+   rejected by the admission controller. If you have existing pods without requests defined,
+   apply the quota and then update all Deployments — in that order — or the Deployments will
+   fail to create new pods during the next rollout.
 
 ## Next Class Preview
-Class 29 covers Pod Disruption Budgets and Priority Classes — preventing surprise outages
-during planned node maintenance and ensuring critical workloads survive resource pressure.
+Class 30 addresses Kubernetes Secrets directly: base64 is not encryption, and this class
+establishes a proper secrets management pipeline using External Secrets Operator.

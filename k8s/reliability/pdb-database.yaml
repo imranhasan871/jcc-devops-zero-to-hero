@@ -1,0 +1,16 @@
+# PodDisruptionBudget for the PostgreSQL StatefulSet.
+# The database is a single point of failure. We cannot allow node drain
+# to evict the DB pod unless we know a replacement is healthy first.
+# minAvailable: 1 will block a drain when only one database pod is running
+# — which is correct behavior; it forces the operator to confirm the DB
+# has migrated before proceeding.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: jcc-database-pdb
+  namespace: jcc-production
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: jcc-database

@@ -124,3 +124,11 @@ netpol-verify: ## List policies and test a connection that should be blocked
 	@echo "=== Testing: backend should NOT reach kube-apiserver ==="
 	kubectl exec -n jcc-production deploy/backend -- \
 	  curl -s --max-time 3 https://kubernetes.default.svc || echo "BLOCKED (expected)"
+
+## ── Reliability ──────────────────────────────────────────────────
+reliability-apply: ## Apply PDBs, PriorityClasses, and ResourceQuota
+	kubectl apply -f k8s/reliability/
+
+reliability-status: ## Show PDB disruption allowance and quota consumption
+	kubectl get pdb -n jcc-production
+	kubectl describe resourcequota jcc-production-quota -n jcc-production

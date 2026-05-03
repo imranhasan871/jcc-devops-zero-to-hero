@@ -25,6 +25,7 @@ spec:
     spec:
       serviceAccountName: jcc-backend
       automountServiceAccountToken: true
+      priorityClassName: jcc-critical
       containers:
         - name: backend
           image: jcc-backend:latest

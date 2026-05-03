@@ -1,0 +1,17 @@
+# PodDisruptionBudget for the backend Deployment.
+# minAvailable: 1 means: during voluntary disruptions (node drain, cluster upgrade),
+# Kubernetes must keep at least 1 backend pod running at all times.
+# With 2 replicas, this allows draining one node at a time but blocks
+# simultaneous eviction of both pods. The drain waits for a replacement
+# pod to reach Ready state before proceeding.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: jcc-backend-pdb
+  namespace: jcc-production
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: jcc-backend
+      tier: backend
