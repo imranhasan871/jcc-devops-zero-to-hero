@@ -78,3 +78,27 @@ monitoring-down: ## Stop monitoring stack
 
 metrics-check: ## Hit the /metrics endpoint locally
 	curl -s http://localhost:3000/metrics
+
+## ── Helm ─────────────────────────────────────────────────────────
+helm-template: ## Render templates locally — no cluster needed
+	helm template jcc ./helm/jcc-chart --debug
+
+helm-install: ## Install chart (first time only)
+	helm upgrade --install jcc ./helm/jcc-chart \
+	  --namespace jcc-production \
+	  --create-namespace \
+	  --atomic \
+	  --timeout 120s
+
+helm-upgrade: ## Upgrade existing release
+	helm upgrade jcc ./helm/jcc-chart \
+	  --namespace jcc-production \
+	  --atomic \
+	  --timeout 120s
+
+helm-diff: ## Show what will change — requires helm-diff plugin
+	helm diff upgrade jcc ./helm/jcc-chart \
+	  --namespace jcc-production
+
+helm-uninstall: ## Remove the release (keeps namespace and PVCs)
+	helm uninstall jcc --namespace jcc-production
