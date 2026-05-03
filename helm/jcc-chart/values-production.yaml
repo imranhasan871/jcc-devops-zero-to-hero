@@ -1,0 +1,40 @@
+# Production overrides for the JCC Helm chart.
+# Overrides helm/jcc-chart/values.yaml when deployed with:
+#   helm upgrade --install jcc ./helm/jcc-chart -f values-production.yaml --set image.tag=$SHA
+#
+# IMPORTANT: No secrets here. Secrets are managed by External Secrets Operator.
+# The K8s Secret "jcc-db-secret" is created by the ExternalSecret manifest.
+
+replicaCount: 3
+
+image:
+  repository: your-registry.io/jcc-backend
+  tag: "DEPLOY_TAG_PLACEHOLDER"   # replaced by CI: --set image.tag=$GIT_SHA
+  pullPolicy: Always
+
+resources:
+  requests:
+    cpu: "200m"
+    memory: "256Mi"
+  limits:
+    cpu: "1000m"
+    memory: "512Mi"
+
+env:
+  NODE_ENV: "production"
+  DB_HOST: "jcc-postgres.jcc-production.svc.cluster.local"
+  DB_PORT: "5432"
+  PORT: "3001"
+
+ingress:
+  enabled: true
+  host: "app.johncasablancas.com"
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70

@@ -132,3 +132,8 @@ reliability-apply: ## Apply PDBs, PriorityClasses, and ResourceQuota
 reliability-status: ## Show PDB disruption allowance and quota consumption
 	kubectl get pdb -n jcc-production
 	kubectl describe resourcequota jcc-production-quota -n jcc-production
+
+## ── Secrets ──────────────────────────────────────────────────────
+secrets-validate: ## Validate ExternalSecret sync status
+	kubectl get externalsecret -n jcc-production
+	kubectl describe externalsecret jcc-db-credentials -n jcc-production | grep -A 5 "Status:"

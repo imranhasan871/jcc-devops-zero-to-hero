@@ -1,0 +1,33 @@
+# Dev overrides — minimal resources, no TLS, local image.
+# No secrets here either. Use a dev SecretStore pointing to a dev AWS SSM path
+# or a local fake provider for development without real credentials.
+
+replicaCount: 1
+
+image:
+  repository: jcc-backend
+  tag: latest
+  pullPolicy: Never   # use locally built image in minikube
+
+resources:
+  requests:
+    cpu: "50m"
+    memory: "64Mi"
+  limits:
+    cpu: "200m"
+    memory: "128Mi"
+
+env:
+  NODE_ENV: "development"
+  DB_HOST: "localhost"
+  DB_PORT: "5432"
+  PORT: "3001"
+
+ingress:
+  enabled: true
+  host: "jcc.local"
+  annotations:
+    kubernetes.io/ingress.class: nginx
+
+autoscaling:
+  enabled: false

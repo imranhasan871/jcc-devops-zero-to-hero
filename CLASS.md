@@ -1,87 +1,89 @@
-# Class 29 — Pod Disruption Budgets + Priority Classes
+# Class 30 — Helm Secrets + External Secrets Operator
 
 ## Objective
-RBAC and NetworkPolicies protect you from attackers. PodDisruptionBudgets and PriorityClasses
-protect you from yourself — specifically from cluster operations (node drains, Kubernetes
-version upgrades, node pool replacements) and resource contention silently taking down
-production. These two primitives are the difference between a controlled maintenance window
-and a 3am incident page.
+Kubernetes Secrets are not secret — they are base64-encoded YAML objects stored in etcd.
+Any cluster user with read access can decode them instantly, and any developer who commits a
+Secrets YAML file to Git has effectively made that credential permanent. This class establishes
+a proper secrets management pipeline using External Secrets Operator to sync real credentials
+from a dedicated secret store into Kubernetes Secrets automatically and continuously.
 
 ## Why This Matters in Production
-The most common Kubernetes-related outage story: an engineer runs `kubectl drain node-3` to
-replace the underlying EC2 instance. Kubernetes obediently evicts all pods on that node. If
-both backend replicas happened to be scheduled on node-3, the app goes completely down for the
-30–90 seconds it takes the replacement pods to start. With a PodDisruptionBudget set to
-`minAvailable: 1`, the drain blocks after evicting the first pod, outputs
-"Cannot evict pod as it would violate the pod's disruption budget," and waits for a
-replacement pod to reach Ready state on another node before evicting the second. Zero
-downtime. Same drain operation, completely different outcome.
+In 2021 researchers scanning public GitHub repositories found over 100,000 credentials
+committed as base64-encoded Kubernetes Secret manifests. Once a secret enters Git history,
+rotation does not help — the old value exists in every clone of the repository forever.
+The standard that SOC2, PCI-DSS, and ISO 27001 auditors look for: secrets must reside in a
+dedicated secrets manager with access logging, audit trails, rotation support, and encryption
+at rest. ESO bridges that world with Kubernetes, creating native Secrets automatically from
+a source of truth that is never committed to Git.
 
 ## What You'll Learn
-- The difference between voluntary and involuntary disruptions
-- How node drain negotiates with PodDisruptionBudgets step by step
-- How PriorityClass affects scheduling and eviction when cluster resources are exhausted
-- How ResourceQuota prevents one namespace from starving others in a shared cluster
-- The traps: minAvailable == replicas, and ResourceQuota requiring explicit resource requests
+- Exactly why base64 is encoding and not encryption, and the practical attack implication
+- The 5 patterns for Kubernetes secrets management and the tradeoffs of each
+- How External Secrets Operator separates WHERE secrets live from WHAT the app needs
+- How to structure Helm values files so no secret value ever appears in source control
+- How ESO's `refreshInterval` enables zero-touch automatic secret rotation
+- Why `creationPolicy: Owner` matters for secret lifecycle management during teardown
 
 ## What Changed in This Class
-- `k8s/reliability/pdb-backend.yaml` — PDB ensuring at least 1 backend pod survives any voluntary drain
-- `k8s/reliability/pdb-database.yaml` — PDB protecting the PostgreSQL pod from concurrent eviction
-- `k8s/reliability/priority-classes.yaml` — jcc-critical (1000) and jcc-standard (100) PriorityClasses
-- `k8s/reliability/resource-quota.yaml` — hard namespace-level limits on pods, CPU, memory, and PVCs
-- `k8s/backend/deployment.yaml` — added `priorityClassName: jcc-critical`
-- `Makefile` — added reliability-apply and reliability-status targets
+- `k8s/external-secrets/secret-store.yaml` — SecretStore declaring the backend (fake provider for demo)
+- `k8s/external-secrets/external-secret.yaml` — ExternalSecret syncing DB credentials into a native K8s Secret
+- `helm/jcc-chart/values-production.yaml` — production Helm overrides with no secret values, only references
+- `helm/jcc-chart/values-dev.yaml` — dev overrides with reduced resources
+- `docs/secrets-management.md` — reference guide covering all 5 secrets patterns
+- `Makefile` — added secrets-validate target
 
 ## Concept Deep Dive
 
-**Voluntary vs Involuntary disruptions** — A voluntary disruption is one a human or controller
-initiates: `kubectl drain`, a managed node group rolling update, a Cluster Autoscaler
-scale-down, a Deployment rollout, a manual pod delete. Kubernetes honours PodDisruptionBudgets
-for voluntary disruptions — it will delay the operation until the budget permits. An
-involuntary disruption is hardware failure, OOM kill, or node crash — Kubernetes cannot
-negotiate these, so PDBs do not apply. For involuntary protection you need replicas spread
-across availability zones using pod anti-affinity rules and topology spread constraints.
+**Base64 vs encryption** — base64 is a reversible encoding scheme that requires no key. It
+exists to make binary data safe for transport in text protocols (email, HTTP headers). It
+provides zero confidentiality. `echo "dGVzdA==" | base64 -d` outputs `test` on any machine
+in milliseconds with no key or password needed. The confusion arises because `kubectl get
+secret` displays base64 strings instead of plaintext, which superficially resembles
+obfuscation. It is not. etcd can be configured with encryption at rest (AES-CBC, AES-GCM)
+which protects the data files on disk — but that is a cluster-level concern entirely separate
+from the Secret object's encoding, and it does nothing to prevent API-level reads.
 
-**PriorityClass under resource pressure** — When a new pod cannot be scheduled because the
-cluster has insufficient free resources, the Kubernetes scheduler looks for running pods it can
-preempt (evict) to make room. Pods with PriorityClass value 1000 will displace pods with value
-100. This mechanism ensures your production backend always gets scheduled even when a developer
-has left a 50-replica load-testing job running. Without PriorityClasses all pods compete
-equally — first-come, first-served — which works fine until it doesn't.
+**SecretStore vs ExternalSecret separation** — ESO separates the WHERE (SecretStore: which
+cloud account, which IAM role, which path prefix) from the WHAT (ExternalSecret: which
+specific keys, what to name them in Kubernetes). Platform teams own SecretStore objects — they
+configure authentication to AWS, Vault, or GCP. Application teams own ExternalSecret objects
+— they declare which keys their app needs without ever seeing the credentials to the secrets
+backend itself. This is clean separation of concerns and maps well to team-level RBAC on the
+ExternalSecret CRD.
 
-**ResourceQuota as a safety net** — ResourceQuota adds hard ceilings on the entire namespace.
-A `kubectl scale deployment backend --replicas=1000` is rejected when the `pods: 20` quota is
-hit. A deployment that sets `limits.memory: 32Gi` per pod is rejected against the namespace
-memory quota. This is correct: the quota is the last line of defence against misconfigurations
-that would exhaust shared cluster capacity. It requires that every pod in the namespace has
-explicit resource requests and limits — which is itself a healthy forcing function.
+**Rotation and refreshInterval** — With `refreshInterval: 1h`, ESO re-reads the secret from
+the backend every hour. Rotate a database password in AWS Secrets Manager and the Kubernetes
+Secret is updated within the hour automatically — no CI pipeline, no manual kubectl, no
+incident. For zero-downtime rotation: update the credential in the backend while the old one
+still works, wait for ESO refresh, then invalidate the old credential. Applications that load
+secrets at startup (rather than on every request) also need a pod restart after the K8s Secret
+updates — consider using a secret reloader sidecar or a rolling restart in your rotation runbook.
 
 ## Hands-On Exercise
-1. Apply reliability resources: `make reliability-apply`
-2. Check PDB status: `kubectl get pdb -n jcc-production`
-   Expected: `ALLOWED DISRUPTIONS: 1` for the backend PDB (with 2 replicas)
-3. Simulate controlled drain: `kubectl drain <node> --ignore-daemonsets --delete-emptydir-data`
-   Observe: it evicts pod 1, waits for replacement, then evicts pod 2
-4. Check quota usage: `kubectl describe resourcequota jcc-production-quota -n jcc-production`
-5. Try to exceed quota: `kubectl scale deployment backend --replicas=25 -n jcc-production`
-   Expected: `Error from server (Forbidden): exceeded quota`
-6. Check priority classes: `kubectl get priorityclasses`
+1. Install ESO: `helm repo add external-secrets https://charts.external-secrets.io && helm install external-secrets external-secrets/external-secrets -n external-secrets --create-namespace`
+2. Apply the SecretStore: `kubectl apply -f k8s/external-secrets/secret-store.yaml`
+3. Apply the ExternalSecret: `kubectl apply -f k8s/external-secrets/external-secret.yaml`
+4. Watch ESO sync: `kubectl get externalsecret -n jcc-production -w`
+   Expected: STATUS transitions from InProgress to Ready
+5. Verify the K8s Secret was created: `kubectl get secret jcc-db-secret -n jcc-production`
+6. Decode a value to confirm: `kubectl get secret jcc-db-secret -n jcc-production -o jsonpath='{.data.db-password}' | base64 -d`
+7. Check status: `make secrets-validate`
 
 ## Common Mistakes
-1. **Setting `minAvailable` equal to `replicaCount`** — If `minAvailable: 2` and you have
-   2 replicas, zero pods can ever be voluntarily evicted. Node drains block indefinitely with
-   no progress. Set minAvailable to `replicas - 1`, or use `maxUnavailable: 1` instead.
-   Always leave room for at least one voluntary disruption.
-2. **Applying PDBs to single-replica Deployments** — A PDB with `minAvailable: 1` on a
-   Deployment with `replicas: 1` means no pods can ever be evicted voluntarily. Maintenance
-   operations block forever. Scale to at least 2 replicas before adding a PDB, or accept that
-   single-replica workloads will have maintenance downtime.
-3. **Applying ResourceQuota without setting resource requests on existing pods** — Once a
-   quota with CPU/memory limits is applied, any pod without explicit `resources.requests` is
-   rejected by the admission controller. If you have existing pods without requests defined,
-   apply the quota and then update all Deployments — in that order — or the Deployments will
-   fail to create new pods during the next rollout.
+1. **Putting image pull secrets or TLS certificates in values files** — Any file under the
+   Helm chart directory is a candidate for accidental Git commits. Even with a `.gitignore`
+   entry, values files get staged by overeager `git add .`. Use ESO or CI `--set` injection
+   for all credential material, treating values files as purely structural configuration.
+2. **Setting refreshInterval too low** — A 1-minute refresh interval on a SecretStore calling
+   AWS Secrets Manager means thousands of API calls per day across a fleet. At scale this
+   exhausts API rate limits and generates meaningful cost. Use 1h for stable secrets; reduce
+   only for credentials being actively rotated on a tight schedule.
+3. **Not accounting for `creationPolicy: Owner` during teardown** — Deleting an ExternalSecret
+   object immediately deletes the K8s Secret it owns. Any Deployment referencing that secret
+   will fail to create new pods (missing secret mount). This is correct lifecycle behavior —
+   be aware of it when tearing down namespaces and sequence the deletion: Deployments first,
+   then ExternalSecrets.
 
 ## Next Class Preview
-Class 30 addresses Kubernetes Secrets directly: base64 is not encryption, and this class
-establishes a proper secrets management pipeline using External Secrets Operator.
+Class 31 moves up the stack to Terraform — provisioning the actual cloud infrastructure
+(VPC, RDS, security groups) as version-controlled code rather than console clicks.
