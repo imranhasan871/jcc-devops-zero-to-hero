@@ -1,46 +1,59 @@
-# Class 35 — GitOps: Kustomize Multi-Environment Promotion
+# Class 36 — Security: Trivy in CI + OPA Gatekeeper
 
 ## The Scenario
-Promoting from dev to production requires logging into Jenkins, finding the right job,
-entering the image tag manually, and hoping the correct person approves. Last month
-the wrong tag was entered — an older image went to production. Nobody noticed for
-6 hours because no diff was shown, no change was recorded, and the process was
-completely undocumented.
+A third-party security audit found: (1) the CI pipeline was shipping container images
+with 12 CRITICAL CVEs — known vulnerabilities with public exploits; (2) any developer
+could deploy a privileged container that could escape to the host node; (3) an image
+from an unknown public registry was found running in production with no record of how
+it got there. The audit report went to the board.
 
 ## The Problem
-Promotion is a verbal process. A developer says "deploy sha-abc123 to production" in
-Slack. Someone logs into Jenkins and types it. There is no record of what changed, no
-review step, no way to see the diff between what is running and what is about to run.
-Rollback means typing a different SHA into the same box.
+There were no automated gates. Vulnerabilities shipped because nobody checked. Privileged
+containers deployed because the API server accepted them. Foreign images ran in production
+because nothing validated provenance at admission time. Security was entirely dependent
+on individual developer awareness — which does not scale and does not survive attrition.
 
 ## Your Mission
-- Build Kustomize overlays for `dev` and `production` that extend the shared base.
-- Dev overlay: namespace `jcc-dev`, replicas 1, image tag `:dev`.
-- Production overlay: namespace `jcc-production`, replicas 3, image tag pinned to a SHA.
-- Validate locally: `kubectl kustomize gitops/environments/dev | grep image`.
-- Simulate a promotion: update the production image tag, commit, open a PR — the diff must show exactly one changed line.
-- ArgoCD must show `jcc-production` OutOfSync after the merge, and display the image tag diff before you sync.
+- Add a `security-scan` CI job using `aquasecurity/trivy-action` that scans the built image.
+- The job must fail (block PR merge) if any CRITICAL CVE is found.
+- SARIF results must upload to the GitHub Security tab so findings are always visible.
+- Install OPA Gatekeeper in the cluster.
+- Apply the resource limits constraint — verify a pod with no limits is rejected.
+- Apply the disallow-privileged constraint — verify a privileged pod is rejected.
+- Apply the allowed-registries constraint — verify a `docker.io` image is rejected.
 
 ## Constraints
-- No environment-specific YAML may duplicate any field already set in the base.
-- The production image tag must be a SHA digest — never `:latest` in production.
-- Promotion must be a PR; direct pushes to main are not acceptable.
+- The Trivy job must run after the image is built, not before.
+- Gatekeeper constraints must use `enforcementAction: deny` — not `warn` or `dryrun`.
+- All three ConstraintTemplates must be applied before the Constraint resources — order matters.
 
 ## Verification
 ```bash
-# Render dev overlay — confirm namespace, replicas, and image tag
-kubectl kustomize gitops/environments/dev | grep -E "namespace:|replicas:|image:"
+# Test resource limits rejection
+kubectl run bad-pod --image=ghcr.io/imranhasan871/jcc-devops-zero-to-hero/jcc-app:dev \
+  -n jcc-dev --restart=Never
+# Expected: Error: ... must set resources.limits.cpu
 
-# Render production overlay — confirm 3 replicas and SHA tag
-kubectl kustomize gitops/environments/production | grep -E "namespace:|replicas:|image:"
+# Test privileged rejection
+kubectl apply -f - <<EOY
+apiVersion: v1
+kind: Pod
+metadata: {name: priv-test, namespace: jcc-dev}
+spec:
+  containers:
+  - name: c
+    image: ghcr.io/imranhasan871/jcc-devops-zero-to-hero/jcc-app:dev
+    securityContext: {privileged: true}
+EOY
+# Expected: Error: must not run as privileged
 ```
 
 ## Stretch Challenge
-Write a GitHub Actions workflow that automatically opens the promotion PR when CI
-pushes a new image SHA to GHCR — no human needs to touch a text editor to promote.
+Configure Trivy to scan the Kubernetes cluster itself for misconfigurations:
+`trivy k8s --report summary cluster` and pipe the output into a GitHub Actions summary.
 
 ## Instructor Notes
-Kustomize overlays solve the copy-paste problem that kills most multi-environment
-setups. The moment students see a one-line PR as a production deployment, the idea
-of typing image tags into Jenkins forms becomes unthinkable. The promotion workflow
-document is the artifact that keeps working after the course ends.
+Security gates fail open by default in most teams — the developer merges without thinking
+about CVEs because nothing stops them. The moment CI blocks a merge with a CRITICAL
+finding, the culture shifts. Gatekeeper survives personnel turnover: the policy is code,
+it is in Git, and it cannot be bypassed by forgetting.

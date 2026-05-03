@@ -1,0 +1,50 @@
+# OPA Gatekeeper: only allow images from the approved registry.
+# Prevents pulling arbitrary public images — a common supply-chain attack vector.
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: allowedregistries
+spec:
+  crd:
+    spec:
+      names:
+        kind: AllowedRegistries
+      validation:
+        openAPIV3Schema:
+          properties:
+            allowedPrefixes:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package allowedregistries
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          image := container.image
+          allowed := input.parameters.allowedPrefixes
+          not any_match(image, allowed)
+          msg := sprintf("Container '%v' image '%v' is not from an allowed registry", [container.name, image])
+        }
+        any_match(image, prefixes) {
+          prefix := prefixes[_]
+          startswith(image, prefix)
+        }
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: AllowedRegistries
+metadata:
+  name: allowed-registries
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    namespaces:
+      - jcc-dev
+      - jcc-production
+  parameters:
+    allowedPrefixes:
+      - "ghcr.io/imranhasan871"
