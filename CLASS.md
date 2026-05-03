@@ -1,50 +1,51 @@
-# Class 18 — K8s PersistentVolumeClaim + Database StatefulSet
+# Class 19 — K8s Ingress + Full Routing
 
 ## Objective
-Replace the ephemeral database Deployment with a proper StatefulSet backed by a
-PersistentVolumeClaim so that PostgreSQL data survives pod restarts and
-rescheduling.
+Expose the entire JCC application through a single external entry point using
+a Kubernetes Ingress resource, routing traffic to the correct service based on
+the URL path.
 
 ## What You'll Learn
-- Why databases must use StatefulSets instead of Deployments
-- What PersistentVolumes (PV) and PersistentVolumeClaims (PVC) are and how they differ
-- How headless Services give StatefulSet pods stable, predictable DNS names
-- How Kubernetes storage classes work and when to specify one
+- The difference between NodePort, LoadBalancer, and Ingress
+- How the NGINX Ingress Controller processes Ingress rules
+- Path-based routing with regex rewriting
+- How to set up local DNS for minikube development
 
 ## What Changed in This Class
-- Added `k8s/database/pvc.yaml` — a 5 Gi ReadWriteOnce claim for Postgres data
-- Added `k8s/database/statefulset.yaml` — replaces the Deployment with a StatefulSet using `postgres:16-alpine`
-- Added `k8s/database/service.yaml` — a headless Service for stable DNS plus a regular ClusterIP for app traffic
+- Updated `k8s/ingress/ingress.yaml` — routes `jcc.local/api/*` to the backend and `/` to the frontend
+- Added `k8s/ingress/ingress-controller.yaml` — instructions for installing the NGINX ingress controller
+- Updated `Makefile` with `k8s-ingress-enable`, `k8s-ingress-apply`, and `k8s-ingress-status` targets
 
 ## Hands-On Exercise
-1. Apply the secret first: `kubectl apply -f k8s/ingress/ingress.yaml` (contains the secret)
-2. Apply the PVC: `kubectl apply -f k8s/database/pvc.yaml`
-3. Apply the StatefulSet and services: `kubectl apply -f k8s/database/`
-4. Watch the pod come up: `kubectl get pods -n jcc -w`
-5. Verify the PVC is bound: `kubectl get pvc -n jcc`
-6. Connect to the pod: `kubectl exec -it postgres-0 -n jcc -- psql -U jcc_user -d jcc_db`
-7. Delete the pod and watch it recreate with the same data: `kubectl delete pod postgres-0 -n jcc`
+1. Enable the ingress addon: `make k8s-ingress-enable`
+2. Get the minikube IP: `minikube ip`
+3. Add `<minikube-ip>  jcc.local` to `/etc/hosts`
+4. Apply the ingress rule: `make k8s-ingress-apply`
+5. Check the ingress: `make k8s-ingress-status`
+6. Open `http://jcc.local` in your browser — you should see the frontend
+7. Test the API: `curl http://jcc.local/api/applicants`
 
 ## Key Concepts
 
-**Deployments vs StatefulSets** — A Deployment treats all pods as identical and
-interchangeable. When a pod is replaced it gets a new name, a new IP, and
-(without a PVC) a fresh empty disk. A StatefulSet gives each pod a stable
-identity (`postgres-0`, `postgres-1`) and binds it to its own PVC. This means
-pod-0 always reconnects to the same volume even after a node failure.
+**NodePort vs LoadBalancer vs Ingress** — NodePort exposes a service on a static
+port on every node (e.g., `30080`). It works but gives every service its own
+port, which is unmanageable. LoadBalancer provisions a cloud load balancer per
+service — expensive when you have many services. Ingress is a single L7 (HTTP)
+load balancer that routes to many services based on hostname and path. One
+external IP, many services.
 
-**PersistentVolumeClaim (PVC) and PersistentVolume (PV)** — A PV is the actual
-storage resource (could be an AWS EBS disk, a GCE disk, an NFS share, or a
-local path). A PVC is a request for storage: "give me 5 Gi of ReadWriteOnce
-storage." Kubernetes matches the claim to a volume. `ReadWriteOnce` means only
-one node can mount it at a time — suitable for a single Postgres pod.
+**NGINX Ingress Controller** — Kubernetes itself only defines the Ingress API.
+The actual routing is done by an Ingress Controller — a pod running NGINX that
+watches for Ingress resources and dynamically updates its configuration. When
+you apply `ingress.yaml`, the controller reads it and generates an NGINX config
+that proxies the right paths to the right ClusterIP services.
 
-**Headless Services** — Setting `clusterIP: None` tells Kubernetes not to
-allocate a virtual IP. Instead, DNS queries return the actual pod IPs directly.
-For StatefulSets this is how pods get stable, addressable DNS names like
-`postgres-0.postgres-headless.jcc.svc.cluster.local`.
+**Path Rewriting** — The annotation `rewrite-target: /$2` strips the `/api`
+prefix before forwarding to the backend. Without this, the backend would
+receive requests as `/api/applicants` instead of `/applicants`. The `$2` capture
+group in the regex `(/api)(/|$)(.*)` captures everything after `/api`.
 
 ## Next Class Preview
-Class 19 introduces Kubernetes Ingress — a single entry point that routes
-external HTTP traffic to the correct backend or frontend service based on the
-URL path, replacing the need for individual NodePort services.
+Class 20 dives into Liveness and Readiness probes — the Kubernetes mechanism
+that determines whether your pod is healthy and ready to accept traffic,
+enabling true zero-downtime deployments.

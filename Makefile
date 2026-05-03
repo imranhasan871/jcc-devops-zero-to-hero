@@ -35,3 +35,19 @@ k8s-status:
 
 k8s-logs:
 	kubectl logs -l app=jcc-backend -n jcc-production --tail=100 -f
+
+# --- Ingress ---
+k8s-ingress-enable:
+	minikube addons enable ingress
+	minikube addons enable ingress-dns
+	@echo "Waiting for ingress controller to be ready..."
+	kubectl wait --namespace ingress-nginx \
+	  --for=condition=ready pod \
+	  --selector=app.kubernetes.io/component=controller \
+	  --timeout=90s
+
+k8s-ingress-apply:
+	kubectl apply -f k8s/ingress/ingress.yaml
+
+k8s-ingress-status:
+	kubectl get ingress -n jcc

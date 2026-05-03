@@ -1,0 +1,32 @@
+# ============================================================
+# NGINX Ingress Controller — Installation Instructions
+# ============================================================
+#
+# The Ingress resource above (ingress.yaml) is just configuration.
+# To actually process Ingress rules you must install an Ingress
+# Controller in your cluster first.
+#
+# --- Minikube (local development) ---
+#   minikube addons enable ingress
+#   minikube addons enable ingress-dns   # optional: enables DNS resolution
+#
+# --- Bare metal / generic cluster ---
+#   kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/cloud/deploy.yaml
+#
+# --- Helm (recommended for production) ---
+#   helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+#   helm repo update
+#   helm install ingress-nginx ingress-nginx/ingress-nginx \
+#     --namespace ingress-nginx --create-namespace
+#
+# After installation, verify:
+#   kubectl get pods -n ingress-nginx
+#   kubectl get svc -n ingress-nginx
+#
+# For local testing add to /etc/hosts:
+#   $(minikube ip)   jcc.local
+#
+# Then you can reach the app at:
+#   http://jcc.local/        -> frontend
+#   http://jcc.local/api/... -> backend API
+# ============================================================
