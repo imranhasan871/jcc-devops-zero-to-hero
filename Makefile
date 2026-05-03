@@ -51,3 +51,20 @@ k8s-ingress-apply:
 
 k8s-ingress-status:
 	kubectl get ingress -n jcc
+
+# --- Rollout management ---
+k8s-rollout-status:
+	kubectl rollout status deployment/backend -n jcc
+
+k8s-rollback:
+	kubectl rollout undo deployment/backend -n jcc
+	kubectl rollout status deployment/backend -n jcc
+
+k8s-rollout-history:
+	kubectl rollout history deployment/backend -n jcc
+
+k8s-scale:
+	kubectl scale deployment/backend --replicas=$(REPLICAS) -n jcc
+
+k8s-hpa-status:
+	kubectl get hpa -n jcc

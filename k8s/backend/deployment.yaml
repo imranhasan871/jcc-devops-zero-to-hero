@@ -12,6 +12,15 @@ spec:
     matchLabels:
       app: jcc
       tier: backend
+  # Rolling update strategy: brings up new pods before taking down old ones.
+  # maxUnavailable: 0 means we NEVER reduce below desired replica count during rollout.
+  # maxSurge: 1 means we can have at most desired+1 pods running simultaneously.
+  # Together: add 1 new pod → wait for it to be Ready → remove 1 old pod → repeat.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0   # zero-downtime: never kill old pods before new ones are ready
+      maxSurge: 1         # only one extra pod at a time (controls rollout speed)
   template:
     metadata:
       labels:
@@ -50,34 +59,26 @@ spec:
                 configMapKeyRef:
                   name: jcc-config
                   key: frontend-url
-          # Readiness probe: pod receives traffic ONLY when this passes.
-          # If it fails, the pod is removed from the Service endpoints — no traffic sent.
-          # Use for: waiting for DB connections, warming up caches, startup initialization.
           readinessProbe:
             httpGet:
               path: /health
               port: 3001
-            initialDelaySeconds: 10   # wait 10s after container start before first check
-            periodSeconds: 5          # check every 5 seconds
-            failureThreshold: 3       # fail 3 times in a row before marking not-ready
-            successThreshold: 1       # 1 success to mark ready again
-          # Liveness probe: if this fails, Kubernetes RESTARTS the container.
-          # Use for: detecting deadlocks, hung processes, OOM-killed goroutines.
-          # Never make it stricter than readiness — a failing liveness causes a restart loop.
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
           livenessProbe:
             httpGet:
               path: /health
               port: 3001
-            initialDelaySeconds: 30   # give the app time to start before we ever check
-            periodSeconds: 10         # check every 10 seconds
-            failureThreshold: 3       # 3 consecutive failures → restart
-          # Startup probe: for slow-starting containers, blocks liveness/readiness
-          # until the app has had enough time to initialize.
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
           startupProbe:
             httpGet:
               path: /health
               port: 3001
-            failureThreshold: 30      # allows up to 30 * 10s = 5 minutes to start
+            failureThreshold: 30
             periodSeconds: 10
           resources:
             requests:

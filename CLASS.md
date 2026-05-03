@@ -1,52 +1,52 @@
-# Class 20 — Health Checks: Liveness + Readiness Probes
+# Class 21 — Rolling Updates + Rollback + Horizontal Pod Autoscaling
 
 ## Objective
-Configure Kubernetes health probes on the backend Deployment so the cluster
-can detect unhealthy pods, route traffic only to ready pods, and automatically
-restart broken containers without manual intervention.
+Configure the backend Deployment for zero-downtime rolling updates, add an
+HPA to automatically scale pods based on load, and learn how to roll back a
+bad deployment in seconds.
 
 ## What You'll Learn
-- The difference between liveness, readiness, and startup probes
-- How probe failures affect pod lifecycle and traffic routing
-- How to tune probe timing to avoid false positives
-- Why probes are essential for zero-downtime deployments
+- How the RollingUpdate strategy works step by step
+- What maxUnavailable and maxSurge control
+- How the HorizontalPodAutoscaler reacts to CPU metrics
+- How to use kubectl rollout to deploy, monitor, and undo releases
 
 ## What Changed in This Class
-- Updated `k8s/backend/deployment.yaml` with explicit readiness, liveness, and startup probes with documented parameters
-- Added resource requests and limits to the backend container
+- Updated `k8s/backend/deployment.yaml` — added explicit `RollingUpdate` strategy with `maxUnavailable: 0` and `maxSurge: 1`
+- Added `k8s/backend/hpa.yaml` — HPA scaling between 2 and 5 replicas at 70% CPU
+- Added Makefile targets: `k8s-rollout-status`, `k8s-rollback`, `k8s-rollout-history`, `k8s-scale`, `k8s-hpa-status`
 
 ## Hands-On Exercise
-1. Apply the updated deployment: `kubectl apply -f k8s/backend/deployment.yaml`
-2. Watch pods roll over: `kubectl rollout status deployment/backend -n jcc`
-3. Describe a pod to see probe config: `kubectl describe pod -l tier=backend -n jcc | grep -A 10 Liveness`
-4. Simulate a failing health check by temporarily changing `/health` to `/bad` in the deployment and applying it
-5. Watch Kubernetes restart the pod: `kubectl get pods -n jcc -w`
-6. Check restart count: `kubectl get pods -n jcc` — look at the RESTARTS column
-7. Fix the path and redeploy to restore health
+1. Apply everything: `kubectl apply -f k8s/backend/`
+2. Watch a rollout in real time — change the image tag and apply: `kubectl set image deployment/backend backend=jcc-backend:v2 -n jcc`
+3. Watch it roll: `make k8s-rollout-status`
+4. Check rollout history: `make k8s-rollout-history`
+5. Simulate a bad deploy with a nonexistent image: `kubectl set image deployment/backend backend=jcc-backend:broken -n jcc`
+6. See it stall: `make k8s-rollout-status` (it will time out)
+7. Roll back: `make k8s-rollback`
+8. Watch the HPA: `make k8s-hpa-status` — install metrics-server first if needed: `minikube addons enable metrics-server`
 
 ## Key Concepts
 
-**Readiness Probe** — Answers the question: "Is this pod ready to serve
-traffic?" When a readiness probe fails, Kubernetes removes the pod from the
-Service's Endpoints list. Requests stop being routed to it, but the pod keeps
-running. This is perfect for handling warm-up time, database reconnection, or
-temporary overload. Once the probe passes again, the pod is added back
-automatically.
+**Zero-Downtime Rolling Updates** — With `maxUnavailable: 0`, Kubernetes never
+removes an old pod until a new one is fully Ready (readiness probe passing). The
+sequence is: scale up to `desired + maxSurge` pods → wait for new pods to pass
+readiness → remove old pods one by one. Users always have at least `desired`
+healthy pods serving traffic throughout.
 
-**Liveness Probe** — Answers the question: "Is this pod still alive and
-functioning?" When a liveness probe fails `failureThreshold` times in a row,
-Kubernetes kills and restarts the container. Use this to escape deadlocks or
-memory corruption that the app cannot recover from on its own. Be careful: a
-liveness probe that is too aggressive (too short `initialDelaySeconds`) will
-cause restart loops on startup, which is worse than no probe.
+**Rollback** — Every `kubectl apply` or `kubectl set image` creates a new
+ReplicaSet and records a revision. `kubectl rollout undo` atomically switches
+back to the previous ReplicaSet. You can also rollback to a specific revision:
+`kubectl rollout undo deployment/backend --to-revision=2`. Kubernetes keeps a
+history of revisions (default 10).
 
-**Startup Probe** — A one-time probe that runs only at startup. While it is
-active, liveness and readiness checks are suspended. This is ideal for
-applications that take a long time to initialize (e.g., loading a large model
-or running database migrations). Set `failureThreshold * periodSeconds` to the
-maximum acceptable startup time.
+**HorizontalPodAutoscaler** — The HPA controller queries the Metrics Server
+every 15 seconds. If average CPU across all pods exceeds 70%, it calculates how
+many pods are needed: `desiredReplicas = ceil(currentReplicas * currentCPU / 70)`.
+The stabilization window prevents flapping — the HPA waits 5 minutes before
+scaling down to avoid thrashing during bursty traffic.
 
 ## Next Class Preview
-Class 21 introduces Rolling Updates and Horizontal Pod Autoscaling — how to
-deploy new versions with zero downtime and automatically scale your pods up and
-down based on CPU load.
+Class 22 introduces Jenkins — a self-hosted CI/CD server. We will set it up
+with Docker and write our first declarative pipeline that mirrors what GitHub
+Actions does, but runs entirely on your own infrastructure.
