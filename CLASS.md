@@ -1,59 +1,69 @@
-# Class 16 — K8s Deployment + Service
+# Class 17 — K8s ConfigMap + Secret
 
 ## Objective
-Deploy the JCC backend to a local Kubernetes cluster using a Deployment and a
-Service. Understand how K8s ensures replicas stay healthy, and how a Service
-provides a stable network address for a dynamic set of pods.
+Separate configuration from code by using Kubernetes ConfigMaps for non-sensitive
+settings and Secrets for credentials. Update the Deployment to consume both.
+Understand why base64 is not encryption and how to manage secrets safely in
+real production environments.
 
 ## What You'll Learn
-- How to write a Kubernetes `Deployment` manifest
-- What `replicas`, `selector`, and `template` mean
-- How readiness and liveness probes protect your application
-- What a `ClusterIP` Service does and how it selects pods
-- How resource requests and limits protect the cluster
+- What a ConfigMap is and when to use it
+- What a Kubernetes Secret is and how it differs from a ConfigMap
+- How `envFrom: configMapRef` injects all keys as environment variables
+- How `valueFrom: secretKeyRef` injects individual secret values
+- Why base64 encoding is NOT security and what to use instead in production
 
 ## What Changed in This Class
-- Added `k8s/backend/deployment.yaml` — 2-replica deployment with health probes and resource limits
-- Added `k8s/backend/service.yaml` — ClusterIP Service on port 3000
-- Updated `Makefile` with `k8s-apply`, `k8s-status`, and `k8s-logs` targets
+- Added `k8s/config/configmap.yaml` — stores `NODE_ENV`, `DB_HOST`, `DB_PORT`, `DB_NAME`
+- Added `k8s/config/secret.yaml` — stores `DB_USER` and `DB_PASSWORD` as base64 (placeholder values only)
+- Updated `k8s/backend/deployment.yaml` to use `envFrom: configMapRef` for the ConfigMap and `secretKeyRef` for individual secret values
+- Updated `Makefile` `k8s-apply` to apply config resources before backend resources
+- Updated `k8s-status` to show configmaps and secrets alongside pods
 
 ## Hands-On Exercise
-1. Build the image locally: `make docker-build && docker tag jcc-app jcc-backend:latest`
-2. If using minikube: `minikube image load jcc-backend:latest`
-3. Apply resources: `make k8s-apply`
-4. Watch pods start: `kubectl get pods -n jcc-production -w`
-5. Check status: `make k8s-status`
-6. Forward a port to test: `kubectl port-forward svc/jcc-backend 3000:3000 -n jcc-production`
-7. Visit `http://localhost:3000/health` — traffic is load-balanced across both pods
-8. Delete a pod manually: `kubectl delete pod <name> -n jcc-production` — watch K8s recreate it
+1. Apply all resources: `make k8s-apply`
+2. Verify the ConfigMap: `kubectl describe configmap jcc-config -n jcc-production`
+3. View the Secret (base64 encoded): `kubectl get secret jcc-secrets -n jcc-production -o yaml`
+4. Decode a value: `kubectl get secret jcc-secrets -n jcc-production -o jsonpath='{.data.DB_USER}' | base64 --decode`
+5. Port-forward and verify env vars reached the pod: `kubectl exec -it <pod-name> -n jcc-production -- env | grep DB`
+6. Update a ConfigMap value and roll out: `kubectl rollout restart deployment/jcc-backend -n jcc-production`
 
 ## Key Concepts
 
-**Deployment vs Pod**
-You almost never create a Pod directly in Kubernetes. A raw Pod has no self-
-healing: if it crashes or the node it runs on fails, the pod is gone. A
-Deployment wraps pods in a `ReplicaSet` that constantly reconciles the actual
-count of running pods against the `replicas:` field. Delete a pod and the
-Deployment immediately schedules a replacement.
+**ConfigMap — Externalise Non-Secret Config**
+A ConfigMap decouples configuration from container images. Instead of baking
+`NODE_ENV=production` into the Dockerfile or hard-coding it in the Deployment
+YAML, it lives in its own resource. You can update a ConfigMap without rebuilding
+the image. `envFrom: configMapRef` is the most convenient form: every key in
+the ConfigMap becomes an environment variable in the container.
 
-**Readiness vs Liveness Probes**
-Both probes call `GET /health` on port 3000, but they serve different purposes:
-- **Liveness probe**: "Is this pod alive?" If it fails, K8s *restarts* the
-  container. Use it to detect deadlocks or hung processes.
-- **Readiness probe**: "Is this pod ready to receive traffic?" If it fails,
-  K8s *removes the pod from the Service's load balancer* but does not restart
-  it. Use it during startup (before the app finishes connecting to the database)
-  and during overload.
+**Kubernetes Secrets — What They Are (and Aren't)**
+A Kubernetes Secret stores sensitive data separately from ConfigMaps and
+provides basic access control: you can grant a pod access to a specific Secret
+without exposing it to all workloads in the namespace. However, Secret values
+are only *base64-encoded*, not encrypted. Base64 is a text encoding — not a
+security measure. Anyone who can read the Secret object (or the etcd database
+backing the cluster) can trivially decode the values.
 
-**ClusterIP Service**
-A `ClusterIP` Service gets a stable virtual IP address inside the cluster.
-All pods with the label `app: jcc-backend` are registered as endpoints.
-Kubernetes routes requests to healthy, ready endpoints automatically. Because
-pods are ephemeral (they get new IPs on restart), the Service's stable IP is
-essential — consumers always use the Service address, never pod IPs directly.
+**WARNING: Never Commit Real Secrets to Git**
+The `secret.yaml` in this repository contains placeholder values only. In a
+real project, committing actual passwords or API keys to git — even base64-
+encoded — is a critical security vulnerability. Git history is permanent; even
+if you delete the file later, the secret is still in every clone.
 
-## Next Class Preview
-In Class 17 we inject configuration into our pods properly using a ConfigMap
-(for non-sensitive values) and a Secret (for passwords). We also update the
-Deployment to load these resources, and discuss why you should never commit
-real secrets to git.
+For production use one of these approaches:
+- **Sealed Secrets**: encrypt secrets with a cluster public key; only the
+  cluster can decrypt them. The encrypted file is safe to commit.
+- **External Secrets Operator**: sync secrets from AWS Secrets Manager, GCP
+  Secret Manager, or HashiCorp Vault into Kubernetes Secrets at runtime.
+- **HashiCorp Vault**: a dedicated secrets management platform with audit
+  logging, dynamic credentials, and fine-grained access policies.
+
+## Course Complete
+Congratulations — you have completed the JCC DevOps curriculum. You started
+with a plain Node.js app and progressively added: containerisation with Docker,
+local orchestration with Docker Compose, a PostgreSQL database with health
+checks, a full CI/CD pipeline with GitHub Actions, automated testing with
+coverage reporting, image publishing to a container registry, and production-
+ready Kubernetes manifests with proper configuration management. These are the
+foundational skills used by DevOps engineers at every level.

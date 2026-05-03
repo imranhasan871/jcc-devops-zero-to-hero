@@ -21,11 +21,20 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: jcc-config
           env:
-            - name: NODE_ENV
-              value: "production"
-            - name: PORT
-              value: "3000"
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: jcc-secrets
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: jcc-secrets
+                  key: DB_PASSWORD
           resources:
             requests:
               cpu: "100m"

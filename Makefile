@@ -27,10 +27,11 @@ docker-logs:
 
 k8s-apply:
 	kubectl apply -f k8s/namespace.yaml
+	kubectl apply -f k8s/config/
 	kubectl apply -f k8s/backend/
 
 k8s-status:
-	kubectl get deployments,pods,services -n jcc-production
+	kubectl get deployments,pods,services,configmaps,secrets -n jcc-production
 
 k8s-logs:
 	kubectl logs -l app=jcc-backend -n jcc-production --tail=100 -f
