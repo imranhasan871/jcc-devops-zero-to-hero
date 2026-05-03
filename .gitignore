@@ -1,0 +1,20 @@
+# Dependencies — never commit these; npm install recreates them
+node_modules/
+
+# Environment secrets — NEVER commit real credentials
+.env
+
+# Build output
+build/
+dist/
+*.log
+npm-debug.log*
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editor metadata
+.vscode/
+.idea/
+*.swp

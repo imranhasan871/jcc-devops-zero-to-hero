@@ -6,7 +6,7 @@ const app     = express();
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 app.use(express.json());
-app.use(express.static(path.join(__dirname, '.')));
+app.use(express.static(path.join(__dirname, 'public')));   // <── serves from public/
 
 // ── In-memory store ───────────────────────────────────────────────────────────
 const programs = [
@@ -20,23 +20,18 @@ let applicants = [];
 let nextId = 1;
 
 // ── Routes ────────────────────────────────────────────────────────────────────
-
-// Health check — useful for load balancers and Docker health checks later
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', uptime: process.uptime(), timestamp: new Date().toISOString() });
 });
 
-// Programs
 app.get('/api/programs', (req, res) => {
   res.json(programs);
 });
 
-// Applicants — list
 app.get('/api/applicants', (req, res) => {
   res.json(applicants);
 });
 
-// Applicants — create
 app.post('/api/applicants', (req, res) => {
   const { name, email, programId } = req.body;
 
@@ -66,5 +61,4 @@ app.post('/api/applicants', (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`JCC server listening on http://localhost:${PORT}`);
-  console.log(`Health: http://localhost:${PORT}/health`);
 });

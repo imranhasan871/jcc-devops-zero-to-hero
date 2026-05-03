@@ -1,56 +1,54 @@
-# Class 02 — Node.js + Express Server
+# Class 03 — Project Structure & Git Hygiene
 
 ## Objective
-We replace `localStorage` with a real HTTP server. Data now lives in one place — the server's
-memory — and any browser that can reach `http://localhost:3000` sees the same applicant list.
-This is the foundational shift from a local toy to something that can eventually be deployed,
-shared, and scaled.
+A working app is not the same as a well-organized project. In this class we apply the
+most fundamental DevOps habit: making sure the repository itself is clean, navigable,
+and trustworthy. We add a `.gitignore` to stop tracking generated files, move source
+files to a logical directory layout, and write a `README.md` so that any developer
+(or your future self) can understand and run the project in under two minutes.
 
 ## What You'll Learn
-- How to bootstrap a Node.js project with `package.json`
-- How Express handles routing, middleware, and JSON responses
-- The purpose of a `/health` endpoint and why it matters for operations
-- How the browser's `fetch` API replaces `localStorage` for data persistence
-- Why in-memory storage is still not enough (and what comes next)
+- Why committing `node_modules/` to git is a serious mistake
+- How `.gitignore` patterns work and what belongs in one
+- How to structure a Node.js project into logical directories
+- How to write a README that is genuinely useful (not just a formality)
+- The principle: the repository should be the source of truth, not a dumping ground
 
 ## What Changed in This Class
-- Added `package.json` — project manifest, declares `express` as a dependency
-- Added `server.js` — Express app with `/api/programs`, `/api/applicants` (GET + POST), `/health`
-- Updated `index.html` — removed all `localStorage` logic; now calls the API with `fetch()`
+- Added `.gitignore` — excludes `node_modules/`, `.env`, `build/`, OS noise
+- Added `README.md` — project overview, directory structure, setup instructions, API table
+- Moved `index.html` → `public/index.html` (separating static assets from server code)
+- Updated `server.js` — `express.static` now serves from `public/` directory
 
 ## Hands-On Exercise
-1. Install dependencies: `npm install` (this creates `node_modules/`).
-2. Start the server: `npm start`.
-3. Open `http://localhost:3000` in your browser. The app looks identical to class-01.
-4. Submit an application. Open a **second browser window** — the applicant appears there too.
-5. Test the API directly in your terminal:
-   ```
-   curl http://localhost:3000/health
-   curl http://localhost:3000/api/programs
-   curl -X POST http://localhost:3000/api/applicants \
-        -H "Content-Type: application/json" \
-        -d '{"name":"Test User","email":"t@t.com","programId":1}'
-   curl http://localhost:3000/api/applicants
-   ```
-6. Kill the server (`Ctrl+C`) and restart it. Notice: **all applicants are gone**.
-7. This is the next problem we need to solve (persistence → database, later classes).
+1. Check what git was previously tracking: `git log --oneline --name-only`.
+2. After this commit, run `git status` inside the project. Notice `node_modules/` no longer appears.
+3. Run `npm install` to create `node_modules/`, then run `git status` again — git ignores it.
+4. Try to force-add it: `git add node_modules/`. Git still respects `.gitignore`.
+5. Inspect the directory: you should now see `public/index.html` instead of `index.html`.
+6. Start the server (`npm start`) and confirm `http://localhost:3000` still works — the
+   app is unchanged; only the layout changed.
+7. Read the README out loud as if you are a new developer joining the project. Is anything
+   unclear? That is your signal to improve it.
 
 ## Key Concepts
 
-**Express middleware**: Functions that run before your route handlers. `express.json()` parses
-incoming request bodies with `Content-Type: application/json` so `req.body` is populated.
-`express.static()` serves files from a directory, turning our Express app into both an API
-server and a static file host.
+**`.gitignore` patterns**: Git reads `.gitignore` from the repo root (and any subdirectory).
+A trailing slash (`node_modules/`) matches only directories. A leading slash (`/build`) anchors
+the pattern to the root. An asterisk matches any string except `/`. You can override an
+ignored pattern with `!` (e.g., `!important-build-artifact`).
 
-**HTTP status codes**: We return `201 Created` on successful POST (not just `200 OK`) and
-`400 Bad Request` with an error message when validation fails. Using correct status codes
-makes your API predictable for clients and monitoring tools alike.
+**`node_modules/` in git**: The `node_modules/` directory can contain tens of thousands of
+files and hundreds of megabytes. Committing it makes every `git clone` and `git pull`
+drastically slower, bloats the repository history permanently, and creates merge conflicts
+that are essentially impossible to resolve. The `package.json` + `package-lock.json` files
+are the source of truth — `npm install` always recreates the exact same tree from them.
 
-**Health endpoint**: `/health` returns server uptime and a timestamp. This single endpoint
-will later be used by Docker, Kubernetes, and load balancers to decide whether the server
-is ready to receive traffic. Building it in now costs nothing and pays dividends every
-class from here on.
+**Separation of concerns in directory layout**: Placing static frontend files in `public/`
+and server code in the root (or a `src/` directory) makes it immediately clear what is
+served to browsers versus what runs on the server. This distinction becomes critical when
+we add a Dockerfile — we want to be intentional about what goes into the image.
 
 ## Next Class Preview
-We reorganize the project layout, add a `.gitignore` to stop tracking `node_modules`, and
-write a `README.md` — the foundations of good Git hygiene.
+We introduce environment configuration so the server's port, database URL, and other
+settings can be changed without editing source code.

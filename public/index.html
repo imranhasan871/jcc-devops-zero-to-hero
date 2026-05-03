@@ -74,7 +74,6 @@
   </main>
 
   <script>
-    // ── API helpers ───────────────────────────────────────────────────────────
     async function apiFetch(path, options = {}) {
       const res = await fetch(path, {
         headers: { 'Content-Type': 'application/json' },
@@ -87,7 +86,6 @@
       return res.json();
     }
 
-    // ── Render programs ───────────────────────────────────────────────────────
     async function renderPrograms() {
       const grid   = document.getElementById('programs-grid');
       const select = document.getElementById('program');
@@ -110,7 +108,6 @@
       }
     }
 
-    // ── Render applicants ─────────────────────────────────────────────────────
     async function renderApplicants() {
       const ul = document.getElementById('applicant-list');
       try {
@@ -128,16 +125,13 @@
       }
     }
 
-    // ── Form submit ───────────────────────────────────────────────────────────
     document.getElementById('application-form').addEventListener('submit', async function(e) {
       e.preventDefault();
       const errEl = document.getElementById('form-error');
       errEl.style.display = 'none';
-
       const name      = document.getElementById('name').value.trim();
       const email     = document.getElementById('email').value.trim();
       const programId = document.getElementById('program').value;
-
       try {
         await apiFetch('/api/applicants', {
           method: 'POST',
@@ -151,7 +145,6 @@
       }
     });
 
-    // ── Init ──────────────────────────────────────────────────────────────────
     renderPrograms();
     renderApplicants();
   </script>
