@@ -1,59 +1,59 @@
-# Class 15 — Kubernetes: Concepts + Namespace
+# Class 16 — K8s Deployment + Service
 
 ## Objective
-Understand what Kubernetes is, why it exists, and how it differs from plain
-Docker. Create the first Kubernetes resource — a Namespace — and build the
-vocabulary needed for the next two classes.
+Deploy the JCC backend to a local Kubernetes cluster using a Deployment and a
+Service. Understand how K8s ensures replicas stay healthy, and how a Service
+provides a stable network address for a dynamic set of pods.
 
 ## What You'll Learn
-- What container orchestration is and why it matters at scale
-- The difference between Docker and Kubernetes
-- Core K8s objects: cluster, node, pod, deployment, service, namespace
-- How to write and apply a Kubernetes YAML manifest
-- What namespaces are used for in production clusters
+- How to write a Kubernetes `Deployment` manifest
+- What `replicas`, `selector`, and `template` mean
+- How readiness and liveness probes protect your application
+- What a `ClusterIP` Service does and how it selects pods
+- How resource requests and limits protect the cluster
 
 ## What Changed in This Class
-- Added `k8s/namespace.yaml` — defines the `jcc-production` namespace
-- Added `k8s/README.md` — full glossary of Kubernetes concepts with the directory layout
+- Added `k8s/backend/deployment.yaml` — 2-replica deployment with health probes and resource limits
+- Added `k8s/backend/service.yaml` — ClusterIP Service on port 3000
+- Updated `Makefile` with `k8s-apply`, `k8s-status`, and `k8s-logs` targets
 
 ## Hands-On Exercise
-1. Install `kubectl` and a local cluster: [minikube](https://minikube.sigs.k8s.io) or [kind](https://kind.sigs.k8s.io)
-2. Start your cluster: `minikube start` or `kind create cluster`
-3. Apply the namespace: `kubectl apply -f k8s/namespace.yaml`
-4. Verify it exists: `kubectl get namespaces`
-5. Describe it: `kubectl describe namespace jcc-production`
-6. Explore the default namespaces: `kube-system`, `kube-public`, `default`
+1. Build the image locally: `make docker-build && docker tag jcc-app jcc-backend:latest`
+2. If using minikube: `minikube image load jcc-backend:latest`
+3. Apply resources: `make k8s-apply`
+4. Watch pods start: `kubectl get pods -n jcc-production -w`
+5. Check status: `make k8s-status`
+6. Forward a port to test: `kubectl port-forward svc/jcc-backend 3000:3000 -n jcc-production`
+7. Visit `http://localhost:3000/health` — traffic is load-balanced across both pods
+8. Delete a pod manually: `kubectl delete pod <name> -n jcc-production` — watch K8s recreate it
 
 ## Key Concepts
 
-**Docker Runs ONE Container — Kubernetes Orchestrates MANY**
-Docker is a tool for packaging and running a single container. It answers the
-question: "How do I run this application on this machine?" Kubernetes answers
-a much harder question: "How do I run 50 copies of this application across
-20 machines, keep them healthy, update them without downtime, and route traffic
-to only the healthy ones?"
+**Deployment vs Pod**
+You almost never create a Pod directly in Kubernetes. A raw Pod has no self-
+healing: if it crashes or the node it runs on fails, the pod is gone. A
+Deployment wraps pods in a `ReplicaSet` that constantly reconciles the actual
+count of running pods against the `replicas:` field. Delete a pod and the
+Deployment immediately schedules a replacement.
 
-At small scale (one server, one app), Docker alone is sufficient. Once you need
-high availability (multiple replicas), horizontal scaling (add more pods under
-load), zero-downtime deployments (rolling updates), or multi-service
-architectures (app + database + cache + background workers), you need an
-orchestrator like Kubernetes.
+**Readiness vs Liveness Probes**
+Both probes call `GET /health` on port 3000, but they serve different purposes:
+- **Liveness probe**: "Is this pod alive?" If it fails, K8s *restarts* the
+  container. Use it to detect deadlocks or hung processes.
+- **Readiness probe**: "Is this pod ready to receive traffic?" If it fails,
+  K8s *removes the pod from the Service's load balancer* but does not restart
+  it. Use it during startup (before the app finishes connecting to the database)
+  and during overload.
 
-**Namespaces — Logical Isolation**
-A namespace is a virtual cluster inside a physical cluster. Resources in
-`jcc-production` are invisible to resources in `jcc-staging` unless you
-explicitly configure cross-namespace access. This isolation prevents teams
-or environments from interfering with each other. Resource quotas and network
-policies can also be applied per namespace, giving operators fine-grained
-control over what each team can deploy and consume.
-
-**Kubernetes is Declarative**
-Like Docker Compose, Kubernetes is declarative: you write YAML that describes
-the *desired state*, and Kubernetes continuously works to make the actual state
-match it. If a pod crashes, K8s restarts it. If a node fails, K8s reschedules
-the pods onto healthy nodes. You declare intent; the control plane acts.
+**ClusterIP Service**
+A `ClusterIP` Service gets a stable virtual IP address inside the cluster.
+All pods with the label `app: jcc-backend` are registered as endpoints.
+Kubernetes routes requests to healthy, ready endpoints automatically. Because
+pods are ephemeral (they get new IPs on restart), the Service's stable IP is
+essential — consumers always use the Service address, never pod IPs directly.
 
 ## Next Class Preview
-In Class 16 we deploy the JCC backend to our local Kubernetes cluster. We write
-a Deployment (which manages pod replicas) and a Service (which provides a stable
-network endpoint) and add `kubectl` shortcuts to the Makefile.
+In Class 17 we inject configuration into our pods properly using a ConfigMap
+(for non-sensitive values) and a Secret (for passwords). We also update the
+Deployment to load these resources, and discuss why you should never commit
+real secrets to git.
