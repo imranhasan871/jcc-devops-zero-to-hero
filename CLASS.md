@@ -1,54 +1,92 @@
-# Class 12 — Automated Tests + Coverage
+# Class 12 — Tests That Actually Catch Bugs
 
-## Objective
-Write a real test suite for the Express API using Jest and Supertest, measure
-how much of the code the tests exercise (coverage), and automatically publish
-the coverage report as a CI artifact on every run.
+## The Scenario
+CI is green. The pipeline runs on every push. And yet a bug slipped through two
+weeks ago that corrupted 47 applicant records. Investigation reveals the test
+suite has 12% coverage. `GET /api/programs` is tested. `POST /api/applicants`
+— the endpoint that writes data — has zero tests. A developer changed the
+required field validation and nobody noticed because there was nothing to notice.
+The coverage number was never tracked. Today that changes.
 
-## What You'll Learn
-- How to test an Express app without a real database using mocks
-- What Jest mocks are and how `jest.mock()` works
-- How Supertest makes HTTP requests against your app in-process
-- What code coverage means and how to interpret the report
-- How GitHub Actions artifacts preserve test output
+## The Problem
+The test suite does not cover the most critical paths in `server.js`. Coverage
+is at 12%. There is no coverage threshold enforced — the CI pipeline accepts any
+coverage number, including zero. Bugs in request validation and error handling
+are invisible to automated checks.
 
-## What Changed in This Class
-- Added `tests/server.test.js` with 5 test cases covering `/health`, `/api/programs`, and `POST /api/applicants`
-- Added `jest.config.js` to configure test environment and coverage collection
-- Updated `package.json` test script to `jest --coverage`
-- Added `jest` and `supertest` as dev dependencies
-- Updated `.github/workflows/ci.yml` to upload the `coverage/` folder as an artifact
+## Your Mission
+1. Write a Jest + Supertest test suite covering every API endpoint with both a
+   happy-path case and at least one error case per endpoint.
+2. Coverage must reach 80%+ on statements and 70%+ on branches for `server.js`.
+3. The CI pipeline must fail — exit code 1 — if coverage drops below these
+   thresholds. The threshold must be enforced in the Jest config, not in a
+   custom script.
+4. The full test suite must complete in under 10 seconds.
+5. The database layer must be mocked — tests must never connect to a real
+   PostgreSQL instance.
 
-## Hands-On Exercise
-1. Run `npm install` to install the new dev dependencies
-2. Run `npm test` locally — all 5 tests should pass
-3. Open `coverage/lcov-report/index.html` in a browser to see line-by-line coverage
-4. Push to GitHub and open the Actions run — download the `coverage-report` artifact
-5. Add a new test for `GET /api/events` following the same pattern
-6. Deliberately delete a test assertion and see coverage drop
+## What You Need to Know First
+- Supertest: how to wrap an Express app without calling `app.listen()`
+- Jest `--coverage` flag and the `coverageThreshold` config option in
+  `package.json` or `jest.config.js`
+- The difference between a unit test mock and an integration test
+- How to mock a module with `jest.mock()` so tests don't need a live database
+- HTTP status codes: 200, 201, 400, 404, 409 — when each is appropriate
 
-## Key Concepts
+## Constraints
+- Tests must not connect to PostgreSQL. Use `jest.mock()` or an in-memory
+  substitute. The mock must enforce the unique-email constraint realistically —
+  posting the same email twice must return `409`, not `201`.
+- Coverage thresholds must be in the Jest configuration, not a shell `if`
+  statement. The `npm test` command must exit 1 automatically when coverage
+  is below threshold.
+- Do not install any new test frameworks. Use Jest and Supertest only.
+- Each test file must be independent — tests must not share state between
+  describe blocks.
 
-**Mocking with Jest**
-Our app uses a real PostgreSQL pool. In tests we do not want a live database —
-it would make tests slow, fragile, and hard to run in CI. `jest.mock('pg')`
-intercepts `require('pg')` and replaces it with a fake implementation. We then
-control what `.query()` returns for each test case using `mockResolvedValueOnce`
-and `mockRejectedValueOnce`.
+## Verification
+```bash
+# Full suite must pass with coverage above threshold
+npm test
+# Expected output lines:
+#   Statements : 80%+
+#   Branches   : 70%+
+#   Tests      : 8 passed, 8 total
+#   exit code  : 0
 
-**Supertest**
-Supertest wraps your Express `app` object and lets you make HTTP requests
-against it programmatically — no need to bind to a port or start a server.
-`request(app).get('/health')` fires a real HTTP request through Express's full
-middleware stack and returns the response for your assertions.
+# Deliberately break coverage — delete one test block, run again
+# Expected: exit code 1 with "Jest: 'statements' coverage threshold ... not met"
 
-**Code Coverage**
-Coverage measures which lines, branches, and functions were executed during
-tests. 100% coverage does not mean zero bugs, but low coverage (below ~70%)
-often means large parts of the code have never been tested at all. The HTML
-report highlights untested lines in red — a useful guide for what to test next.
+# Required test cases (you write these — not given to you):
+# GET  /health                        → 200
+# GET  /api/programs                  → 200, array with ≥3 items
+# GET  /api/applicants                → 200, array
+# POST /api/applicants  valid body    → 201, returns created applicant
+# POST /api/applicants  missing name  → 400, specific error message
+# POST /api/applicants  missing email → 400, specific error message
+# POST /api/applicants  duplicate email → 409
+# GET  /nonexistent                   → 404
+```
 
-## Next Class Preview
-In Class 13 we teach CI to build the Docker image. Every push will verify that
-the Dockerfile itself is valid and that the production image can be assembled
-successfully — catching container build failures before they hit production.
+## Stretch Challenge
+Use your test suite to find a real bug: change `POST /api/applicants` validation
+to accidentally accept an empty-string name (`name: ""`). Your tests should
+catch this regression. Fix both the validation logic and update the test that
+exposes it. Document what the root cause was and why the test caught it when
+code review did not.
+
+## Instructor Notes
+The threshold in Jest config is the critical detail. Many developers run
+`--coverage` and look at the report but never enforce the number. Without
+`coverageThreshold`, 12% coverage still produces a green CI run. The pipeline
+must fail automatically — that is what makes the threshold real.
+
+The database mock must be realistic. A mock that always returns success for
+duplicate emails teaches students that the constraint doesn't matter. The mock
+must replicate at minimum: find-by-email before insert, throw on duplicate.
+
+Wrong approach to avoid: mocking at the HTTP layer (intercepting `fetch` or
+`axios`). The correct mock target is the database module that `server.js`
+imports. The test sends a real HTTP request to the Express app; only the
+database call is mocked. This tests actual request parsing, validation logic,
+and response formatting — everything except the database wire.
