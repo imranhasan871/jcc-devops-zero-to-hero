@@ -1,38 +1,63 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# Dockerfile — Optimised layer caching
+# Dockerfile — Multi-stage build
 #
-# Key insight: Docker caches each layer. If a layer's inputs haven't changed,
-# Docker reuses the cached layer instead of re-running the instruction.
+# Stage 1 (builder): Install ALL dependencies (including devDependencies) and
+#                    run any build steps (transpilation, bundling, etc.).
 #
-# WRONG order (slow):              RIGHT order (fast, this file):
-#   COPY . .                         COPY package*.json ./
-#   RUN npm install                  RUN npm install
-#                                    COPY . .
+# Stage 2 (production): Start fresh from the same base image. Copy only the
+#                       production artefacts from the builder stage. Install
+#                       only production dependencies. Run as a non-root user.
 #
-# With the wrong order, any change to ANY source file (even a typo in a comment)
-# invalidates the COPY layer, which invalidates the RUN npm install layer, which
-# means npm install runs from scratch on every build. With the right order, npm
-# install is only re-run when package.json or package-lock.json actually changes.
+# Why multi-stage?
+#   - The final image contains ZERO build tools, test frameworks, or devDeps.
+#   - Smaller image = faster pulls, less attack surface, lower storage cost.
+#   - Non-root user = exploiting the app process cannot easily escalate to root.
 # ──────────────────────────────────────────────────────────────────────────────
 
-FROM node:20-alpine
+# ── Stage 1: builder ──────────────────────────────────────────────────────────
+# This stage exists only during the build. Its layers are discarded afterwards
+# and never appear in the final image.
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# STEP 1: Copy only the dependency manifest files first.
-# These files change infrequently. As long as they haven't changed,
-# Docker reuses the cached result of the npm install step below.
+# Copy manifests and install ALL dependencies (including dev) so we could run
+# linting, tests, or a build step here if needed.
 COPY package*.json ./
+RUN npm install
 
-# STEP 2: Install dependencies.
-# This layer is cached and reused on the next build IF package*.json hasn't changed.
-# Typical npm install: 30-60 seconds. With caching: ~0 seconds.
+# Copy the full source code into the builder stage.
+COPY . .
+
+# If this were a TypeScript project or a frontend with a bundler, you would run
+# the build step here, e.g.: RUN npm run build
+
+
+# ── Stage 2: production ───────────────────────────────────────────────────────
+# We start completely fresh. Docker discards everything from the builder stage
+# except what we explicitly COPY --from=builder.
+FROM node:20-alpine AS production
+
+WORKDIR /app
+
+# Copy ONLY the dependency manifests and install production deps only.
+# This is a separate npm install from the builder stage — no devDependencies.
+COPY package*.json ./
 RUN npm install --omit=dev
 
-# STEP 3: Copy the rest of the source code.
-# This layer changes on every code edit — but that's fine because it doesn't
-# trigger a re-install of npm packages. Docker rebuilds only from this point.
-COPY . .
+# Copy application source from the builder stage (not from your local machine).
+# In a compiled project, you would copy the build output directory instead.
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/server.js ./server.js
+COPY --from=builder /app/config.js ./config.js
+
+# ── Security: non-root user ───────────────────────────────────────────────────
+# The node:20-alpine image ships with a built-in "node" user (UID 1000).
+# By switching to it we ensure the Node.js process cannot write to system
+# directories, cannot install packages, and cannot modify the image filesystem.
+# If an attacker exploits a vulnerability in the app, their blast radius is
+# limited to what UID 1000 can do — which is almost nothing.
+USER node
 
 EXPOSE 3000
 

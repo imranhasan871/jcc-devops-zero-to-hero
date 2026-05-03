@@ -1,61 +1,72 @@
-# Class 07 — .dockerignore & Layer Caching
+# Class 08 — Multi-Stage Docker Build
 
 ## Objective
-A working Dockerfile is not the same as an efficient one. In this class we make two
-targeted improvements: a `.dockerignore` file to exclude irrelevant files from the build
-context, and a reordering of Dockerfile instructions to exploit Docker's layer caching
-mechanism. The result is a build that goes from potentially 60+ seconds down to under
-2 seconds for the common case of "I only changed one line of JavaScript."
+A single-stage Dockerfile does the job, but the resulting image carries unnecessary weight:
+devDependencies, build tools, test frameworks, and potentially sensitive build-time files.
+Multi-stage builds are Docker's answer to this. We define multiple `FROM` instructions in
+a single Dockerfile; each stage can use a different base image and can selectively copy
+artefacts from previous stages. The final image contains only what is needed to run the
+app — nothing more. We also introduce running the process as a non-root user, a security
+best practice that takes one line and meaningfully shrinks the blast radius of any exploit.
 
 ## What You'll Learn
-- What the Docker build context is and why its size matters
-- How `.dockerignore` works (and how it mirrors `.gitignore`)
-- How Docker's layer caching works: what invalidates a cache hit
-- Why instruction order in a Dockerfile is a performance and correctness concern
-- The canonical pattern for caching `npm install` in a Dockerfile
+- How multi-stage builds work and why they matter for production images
+- The `COPY --from=<stage>` syntax for selectively copying build artefacts
+- How to measure Docker image size and understand where bytes come from
+- The principle of least privilege applied to containers (non-root USER)
+- How to name stages with `AS` and reference them by name
 
 ## What Changed in This Class
-- Added `.dockerignore` — excludes `node_modules/`, `.env`, `.git`, docs, editor noise
-- Updated `Dockerfile` — split `COPY . .` into two steps: copy `package*.json` first,
-  run `npm install`, then copy the rest of the source code
+- Updated `Dockerfile` — two named stages: `builder` (all deps, full source) and
+  `production` (prod deps only, selective COPY from builder, `USER node`)
 
 ## Hands-On Exercise
-1. Build the image once: `docker build -t jcc-platform:class-07 .`
-   Note how long `npm install` takes.
-2. Edit `public/index.html` — change the page title slightly. Save.
-3. Build again: `docker build -t jcc-platform:class-07 .`
-   Observe the output: steps 1-3 (FROM, WORKDIR, COPY package*.json) show "CACHED".
-   The `npm install` step also shows "CACHED". Only the final `COPY . .` runs fresh.
-4. Now edit `package.json` — add a space somewhere. Save.
-5. Build again. This time `npm install` re-runs because `package*.json` changed.
-6. Without `.dockerignore`, check what happens: temporarily rename it, then
-   `docker build -t jcc-platform:no-ignore .` and watch the "Sending build context" line.
-   With `.dockerignore` the context is a few KB; without it, it includes all of
-   `node_modules/` (potentially 50+ MB sent to the Docker daemon every single build).
+1. Build the multi-stage image: `docker build -t jcc-platform:class-08 .`
+2. Compare image sizes:
+   ```
+   docker images | grep jcc-platform
+   ```
+   The class-08 image should be noticeably smaller than class-06/07 (no devDependencies).
+3. Run the production image: `docker run -p 3000:3000 jcc-platform:class-08`
+   The app works exactly the same from the browser's perspective.
+4. Verify the non-root user: `docker run --rm jcc-platform:class-08 whoami`
+   Output should be `node`, not `root`.
+5. Try to install something as the node user:
+   `docker run --rm jcc-platform:class-08 npm install -g cowsay`
+   It should fail with a permission error — exactly what we want.
+6. Inspect what's in the final image:
+   `docker run --rm jcc-platform:class-08 ls /app`
+   You should see only `public/`, `server.js`, `config.js`, `package.json`,
+   `package-lock.json`, and `node_modules/` — nothing else.
+7. Confirm no devDependencies: `docker run --rm jcc-platform:class-08 ls node_modules | grep nodemon`
+   Should return empty — nodemon is not present.
 
 ## Key Concepts
 
-**Docker build context**: When you run `docker build .`, Docker sends all files in `.`
-(the build context) to the Docker daemon before executing any instruction. If `node_modules/`
-is not in `.dockerignore`, those hundreds of megabytes are uploaded on every single build —
-even though `RUN npm install` immediately creates its own copy inside the image. The
-`.dockerignore` file tells Docker which files to exclude from the context transfer,
-making the initial step nearly instant.
+**Multi-stage builds**: A single Dockerfile can contain multiple `FROM` instructions. Each
+one starts a new stage with a clean filesystem. Stages can be named with `AS <name>`. You
+copy files between stages with `COPY --from=<stage-name> <src> <dst>`. Only the last stage
+is written into the final image; all previous stages are discarded after the build. This
+pattern is essential for compiled languages (Go, Rust, TypeScript) where you need a full
+compiler toolchain at build time but only a tiny runtime at deploy time. For Node.js, the
+benefit is eliminating devDependencies and any intermediate build files.
 
-**Layer caching and invalidation**: A Docker image is a stack of read-only layers. Each
-instruction that modifies the filesystem (`COPY`, `RUN`, `ADD`) creates one layer. When
-you rebuild, Docker compares each instruction against its cache. If the instruction text
-AND all its inputs are identical to a previous build, Docker reuses the cached layer and
-skips execution. The moment a layer is invalidated (its inputs changed), all layers below
-it are also invalidated — they cannot be reused because their starting point has changed.
-This is why the COPY/RUN order matters so much: `COPY . .` is invalidated on every source
-change, so any `RUN npm install` after it can never be cached.
+**Image size and attack surface**: Every megabyte in a Docker image is a megabyte that
+must be pulled from a registry, stored on every node in your cluster, and scanned by
+security tools. More importantly, every installed package is a potential vulnerability.
+A smaller image has fewer packages, fewer CVEs, and a simpler security audit. Multi-stage
+builds are the single most effective technique for shrinking production images without
+changing any application code.
 
-**package*.json glob**: Using `COPY package*.json ./` copies both `package.json` and
-`package-lock.json` (if present) in a single instruction. `package-lock.json` is critical
-because it pins the exact version of every transitive dependency — copying only
-`package.json` would allow minor version drift between builds.
+**Non-root USER**: By default, processes inside a Docker container run as `root` (UID 0).
+Root inside a container is not the same as root on the host (thanks to Linux namespaces),
+but it is still far more permissive than necessary. The `node:20-alpine` image ships with
+a built-in `node` user (UID 1000). Adding `USER node` before `CMD` means the Node.js
+process runs with no ability to modify system files, install packages globally, or bind
+to privileged ports (< 1024). Port 3000 is above the privileged threshold so this
+restriction does not affect us. This is the principle of least privilege applied to
+containers: grant only the permissions actually required, nothing more.
 
 ## Next Class Preview
-We upgrade to a multi-stage Dockerfile that produces a smaller, more secure production
-image by separating the build environment from the runtime environment.
+Coming up: we add Docker Compose to orchestrate the application alongside a PostgreSQL
+database, replacing our in-memory store with real persistent storage.
