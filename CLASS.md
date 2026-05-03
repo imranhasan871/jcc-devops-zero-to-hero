@@ -1,69 +1,92 @@
-# Class 17 — K8s ConfigMap + Secret
+# Class 17 — Kill the Hardcoded Credentials
 
-## Objective
-Separate configuration from code by using Kubernetes ConfigMaps for non-sensitive
-settings and Secrets for credentials. Update the Deployment to consume both.
-Understand why base64 is not encryption and how to manage secrets safely in
-real production environments.
+## The Scenario
+The security team's automated scanner flagged `k8s/backend/deployment.yaml`
+at 9am this morning. The database password is committed in plaintext to the
+repository. It has been there for two weeks. The finding is classified P1:
+"Secret material in version control — remediate within 24 hours." Meanwhile,
+the ops team maintains two copies of the deployment manifest — one for dev, one
+for production — that differ only in four environment variable values. Any
+change to either environment requires editing both files manually. Last week
+they diverged. Prod broke.
 
-## What You'll Learn
-- What a ConfigMap is and when to use it
-- What a Kubernetes Secret is and how it differs from a ConfigMap
-- How `envFrom: configMapRef` injects all keys as environment variables
-- How `valueFrom: secretKeyRef` injects individual secret values
-- Why base64 encoding is NOT security and what to use instead in production
+## The Problem
+All configuration is hardcoded in `deployment.yaml`. Sensitive values live in
+Git. Non-sensitive values are duplicated across environments. There is no clean
+separation between what changes per environment and what is actually secret.
 
-## What Changed in This Class
-- Added `k8s/config/configmap.yaml` — stores `NODE_ENV`, `DB_HOST`, `DB_PORT`, `DB_NAME`
-- Added `k8s/config/secret.yaml` — stores `DB_USER` and `DB_PASSWORD` as base64 (placeholder values only)
-- Updated `k8s/backend/deployment.yaml` to use `envFrom: configMapRef` for the ConfigMap and `secretKeyRef` for individual secret values
-- Updated `Makefile` `k8s-apply` to apply config resources before backend resources
-- Updated `k8s-status` to show configmaps and secrets alongside pods
+## Your Mission
+1. Create a `ConfigMap` named `jcc-config` in namespace `jcc-production`
+   containing exactly five non-sensitive keys: `NODE_ENV`, `DB_HOST`, `DB_PORT`,
+   `DB_NAME`, `PORT`.
+2. Create a `Secret` named `jcc-db-secret` in namespace `jcc-production`
+   containing exactly two keys: `DB_PASSWORD` and `DB_USER`. The values in
+   `k8s/backend/secret.yaml` committed to this repo must be placeholder text
+   only — never real credentials.
+3. Update `deployment.yaml` so that every environment variable is sourced from
+   either the ConfigMap or the Secret. Zero literal `value:` entries allowed
+   for any of the seven keys above.
+4. The deployment must continue to run — both pods `Running 1/1` after applying
+   the updated manifests.
+5. Add a comment in `deployment.yaml` explaining why the ConfigMap must be
+   applied before the Deployment (and what happens at runtime if it is not).
 
-## Hands-On Exercise
-1. Apply all resources: `make k8s-apply`
-2. Verify the ConfigMap: `kubectl describe configmap jcc-config -n jcc-production`
-3. View the Secret (base64 encoded): `kubectl get secret jcc-secrets -n jcc-production -o yaml`
-4. Decode a value: `kubectl get secret jcc-secrets -n jcc-production -o jsonpath='{.data.DB_USER}' | base64 --decode`
-5. Port-forward and verify env vars reached the pod: `kubectl exec -it <pod-name> -n jcc-production -- env | grep DB`
-6. Update a ConfigMap value and roll out: `kubectl rollout restart deployment/jcc-backend -n jcc-production`
+## What You Need to Know First
+- `envFrom` + `configMapRef` injects all keys from a ConfigMap as env vars.
+- `valueFrom.secretKeyRef` injects a single key from a Secret.
+- Kubernetes Secrets are base64-encoded, not encrypted at rest (unless your
+  cluster has envelope encryption enabled).
+- `kubectl create configmap` and `kubectl create secret generic` can generate
+  manifests with `--dry-run=client -o yaml` for review before applying.
+- Apply order: ConfigMaps and Secrets must exist before Pods that reference
+  them; the Pod will fail to start with `CreateContainerConfigError` otherwise.
 
-## Key Concepts
+## Constraints
+- After your change, this command must return no output:
+  ```bash
+  grep -rE "changeme|password123|secret[[:space:]]*:" k8s/backend/deployment.yaml
+  ```
+- `secret.yaml` must be committed with placeholder values (e.g., `PLACEHOLDER`
+  or `changeme`) — document in a comment that real values are applied via CI
+  from a secrets manager, never committed.
+- You must answer in CLASS.md (below the Instructor Notes) the following
+  question: if an attacker already has `kubectl get secrets` RBAC access to the
+  namespace, does a Kubernetes Secret protect the data? What should you use
+  instead in a production cluster handling PII?
 
-**ConfigMap — Externalise Non-Secret Config**
-A ConfigMap decouples configuration from container images. Instead of baking
-`NODE_ENV=production` into the Dockerfile or hard-coding it in the Deployment
-YAML, it lives in its own resource. You can update a ConfigMap without rebuilding
-the image. `envFrom: configMapRef` is the most convenient form: every key in
-the ConfigMap becomes an environment variable in the container.
+## Verification
+```bash
+kubectl get configmap jcc-config -n jcc-production -o yaml
+# Must show all 5 keys: NODE_ENV, DB_HOST, DB_PORT, DB_NAME, PORT
 
-**Kubernetes Secrets — What They Are (and Aren't)**
-A Kubernetes Secret stores sensitive data separately from ConfigMaps and
-provides basic access control: you can grant a pod access to a specific Secret
-without exposing it to all workloads in the namespace. However, Secret values
-are only *base64-encoded*, not encrypted. Base64 is a text encoding — not a
-security measure. Anyone who can read the Secret object (or the etcd database
-backing the cluster) can trivially decode the values.
+kubectl get secret jcc-db-secret -n jcc-production -o jsonpath='{.data.DB_PASSWORD}' | base64 -d
+# Must NOT print a real password (must print the placeholder)
 
-**WARNING: Never Commit Real Secrets to Git**
-The `secret.yaml` in this repository contains placeholder values only. In a
-real project, committing actual passwords or API keys to git — even base64-
-encoded — is a critical security vulnerability. Git history is permanent; even
-if you delete the file later, the secret is still in every clone.
+kubectl exec -n jcc-production deploy/backend -- env | grep DB_HOST
+# Must print the value sourced from the ConfigMap
 
-For production use one of these approaches:
-- **Sealed Secrets**: encrypt secrets with a cluster public key; only the
-  cluster can decrypt them. The encrypted file is safe to commit.
-- **External Secrets Operator**: sync secrets from AWS Secrets Manager, GCP
-  Secret Manager, or HashiCorp Vault into Kubernetes Secrets at runtime.
-- **HashiCorp Vault**: a dedicated secrets management platform with audit
-  logging, dynamic credentials, and fine-grained access policies.
+kubectl get pods -n jcc-production
+# Must show both pods Running 1/1
+```
 
-## Course Complete
-Congratulations — you have completed the JCC DevOps curriculum. You started
-with a plain Node.js app and progressively added: containerisation with Docker,
-local orchestration with Docker Compose, a PostgreSQL database with health
-checks, a full CI/CD pipeline with GitHub Actions, automated testing with
-coverage reporting, image publishing to a container registry, and production-
-ready Kubernetes manifests with proper configuration management. These are the
-foundational skills used by DevOps engineers at every level.
+## Stretch Challenge
+Kubernetes Secrets are base64-encoded, not encrypted. Prove it without using
+any external tools: retrieve the Secret with `kubectl get secret jcc-db-secret
+-n jcc-production -o yaml`, take the base64 value of `DB_PASSWORD`, and decode
+it using only `kubectl` and standard shell utilities. Write one paragraph
+explaining what Sealed Secrets (Bitnami) or HashiCorp Vault Agent Injector
+solves that Kubernetes Secrets do not.
+
+## Instructor Notes
+**Why this matters.** Credentials in Git is among the top three causes of
+cloud breaches — once committed, the value is in the reflog, every clone, and
+CI logs. Base64 in a Kubernetes Secret is not encryption; it requires RBAC,
+audit logging, and encryption-at-rest to mean anything. This class establishes
+the correct separation of concerns; Vault/Sealed Secrets come later.
+
+**Common wrong approach.** Using `envFrom` for the Secret too. Principle of
+least privilege: inject exactly the keys the app needs via `secretKeyRef`.
+
+**Apply order.** Students who apply Deployment before ConfigMap hit
+`CreateContainerConfigError`. Intentional — Kubernetes resolves references at
+scheduling time, not apply time. Make them see the error before explaining it.
