@@ -1,55 +1,54 @@
-# Class 11 — GitHub Actions: First CI Workflow
+# Class 12 — Automated Tests + Coverage
 
 ## Objective
-Set up Continuous Integration (CI) so that every push to the repository
-automatically runs the linter and test suite. Broken code is caught before it
-ever reaches a teammate's machine.
+Write a real test suite for the Express API using Jest and Supertest, measure
+how much of the code the tests exercise (coverage), and automatically publish
+the coverage report as a CI artifact on every run.
 
 ## What You'll Learn
-- What Continuous Integration is and why it matters
-- How GitHub Actions workflows are structured
-- What triggers (`on:`) control when a workflow runs
-- How jobs, steps, and actions compose a pipeline
-- The difference between `npm install` and `npm ci`
+- How to test an Express app without a real database using mocks
+- What Jest mocks are and how `jest.mock()` works
+- How Supertest makes HTTP requests against your app in-process
+- What code coverage means and how to interpret the report
+- How GitHub Actions artifacts preserve test output
 
 ## What Changed in This Class
-- Added `.github/workflows/ci.yml` with a `lint-and-test` job
-- Workflow triggers on every push to any branch and on PRs targeting `main`
-- Job runs on `ubuntu-latest` with Node.js 20
-- Steps: checkout → install → lint → test
+- Added `tests/server.test.js` with 5 test cases covering `/health`, `/api/programs`, and `POST /api/applicants`
+- Added `jest.config.js` to configure test environment and coverage collection
+- Updated `package.json` test script to `jest --coverage`
+- Added `jest` and `supertest` as dev dependencies
+- Updated `.github/workflows/ci.yml` to upload the `coverage/` folder as an artifact
 
 ## Hands-On Exercise
-1. Push this branch to GitHub: `git push -u origin class-11`
-2. Navigate to your repo on GitHub → **Actions** tab
-3. Watch the `CI` workflow run in real time
-4. Intentionally break a lint rule in `server.js`, push again, and see it fail
-5. Fix the lint error, push once more — confirm the workflow goes green
-6. Open a pull request from `class-11` into `main` and observe CI runs on the PR
+1. Run `npm install` to install the new dev dependencies
+2. Run `npm test` locally — all 5 tests should pass
+3. Open `coverage/lcov-report/index.html` in a browser to see line-by-line coverage
+4. Push to GitHub and open the Actions run — download the `coverage-report` artifact
+5. Add a new test for `GET /api/events` following the same pattern
+6. Deliberately delete a test assertion and see coverage drop
 
 ## Key Concepts
 
-**What is Continuous Integration?**
-CI is the practice of merging code changes into a shared branch frequently and
-verifying each merge automatically. The goal is to detect integration problems
-early, when they are cheap to fix. Without CI, bugs accumulate silently until
-a manual deploy — at which point untangling multiple changes is painful.
+**Mocking with Jest**
+Our app uses a real PostgreSQL pool. In tests we do not want a live database —
+it would make tests slow, fragile, and hard to run in CI. `jest.mock('pg')`
+intercepts `require('pg')` and replaces it with a fake implementation. We then
+control what `.query()` returns for each test case using `mockResolvedValueOnce`
+and `mockRejectedValueOnce`.
 
-**Workflow File Anatomy**
-A GitHub Actions workflow is a YAML file inside `.github/workflows/`. The top-
-level keys are:
-- `name` — displayed in the GitHub UI
-- `on` — the events that trigger the workflow (push, pull_request, schedule, etc.)
-- `jobs` — one or more independent (or dependent) units of work, each running
-  on a fresh virtual machine
-- `steps` — sequential commands or reusable actions within a job
+**Supertest**
+Supertest wraps your Express `app` object and lets you make HTTP requests
+against it programmatically — no need to bind to a port or start a server.
+`request(app).get('/health')` fires a real HTTP request through Express's full
+middleware stack and returns the response for your assertions.
 
-**`npm ci` vs `npm install`**
-`npm ci` (short for "clean install") deletes `node_modules` and installs
-*exactly* what is in `package-lock.json`. It fails if the lockfile is out of
-sync. This makes CI builds reproducible — you are always testing against the
-same dependency versions that were committed, not a potentially different
-resolution.
+**Code Coverage**
+Coverage measures which lines, branches, and functions were executed during
+tests. 100% coverage does not mean zero bugs, but low coverage (below ~70%)
+often means large parts of the code have never been tested at all. The HTML
+report highlights untested lines in red — a useful guide for what to test next.
 
 ## Next Class Preview
-In Class 12 we write real automated tests using Jest and Supertest, and update
-the workflow to collect and upload a code-coverage report as a CI artifact.
+In Class 13 we teach CI to build the Docker image. Every push will verify that
+the Dockerfile itself is valid and that the production image can be assembled
+successfully — catching container build failures before they hit production.
