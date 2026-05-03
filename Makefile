@@ -169,3 +169,22 @@ eks-nodes: ## List EKS worker nodes and their status
 eks-cluster-info: ## Show cluster endpoint and version
 	kubectl cluster-info
 	kubectl version --short
+
+## ── Vault ────────────────────────────────────────────────────────
+vault-dev-start: ## Start Vault dev server
+	docker compose -f docker-compose.vault.yml up -d
+	@echo "Vault UI: http://localhost:8200 (token: root)"
+
+vault-dev-stop: ## Stop Vault dev server
+	docker compose -f docker-compose.vault.yml down
+
+vault-init: ## Bootstrap Vault with JCC secrets and policies
+	VAULT_ADDR=http://localhost:8200 VAULT_TOKEN=root bash vault/setup/init-vault.sh
+
+vault-put-secret: ## Write a secret: make vault-put-secret KEY=secret/jcc/db FIELD=db_password VALUE=x
+	VAULT_ADDR=http://localhost:8200 VAULT_TOKEN=root \
+	  vault kv patch $(KEY) $(FIELD)="$(VALUE)"
+
+vault-get-secret: ## Read a secret: make vault-get-secret PATH=secret/jcc/db
+	VAULT_ADDR=http://localhost:8200 VAULT_TOKEN=root \
+	  vault kv get $(PATH)
