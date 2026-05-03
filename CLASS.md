@@ -1,72 +1,99 @@
 # Class 08 — Multi-Stage Docker Build
 
-## Objective
-A single-stage Dockerfile does the job, but the resulting image carries unnecessary weight:
-devDependencies, build tools, test frameworks, and potentially sensitive build-time files.
-Multi-stage builds are Docker's answer to this. We define multiple `FROM` instructions in
-a single Dockerfile; each stage can use a different base image and can selectively copy
-artefacts from previous stages. The final image contains only what is needed to run the
-app — nothing more. We also introduce running the process as a non-root user, a security
-best practice that takes one line and meaningfully shrinks the blast radius of any exploit.
+## The Scenario
+Automated security scanning ran overnight on the JCC image that shipped to
+staging. The report landed in your inbox at 07:00: 47 vulnerabilities, 6
+classified CRITICAL. The CVEs trace back to development tools and test
+frameworks that were accidentally included in the production image. The ops
+team has a non-negotiable policy: production images must be under 120 MB and
+must carry zero CRITICAL CVEs. The image is currently 680 MB. The client goes
+live in four days.
 
-## What You'll Learn
-- How multi-stage builds work and why they matter for production images
-- The `COPY --from=<stage>` syntax for selectively copying build artefacts
-- How to measure Docker image size and understand where bytes come from
-- The principle of least privilege applied to containers (non-root USER)
-- How to name stages with `AS` and reference them by name
+## The Problem
+The existing single-stage Dockerfile installs every dependency — including
+`nodemon`, `jest`, `eslint`, and their entire transitive trees — into the
+final production image. None of those packages run in production. They exist
+only to serve the development and test workflow. The image is nearly six times
+larger than it needs to be, and every dev tool installed is a potential
+exploit surface.
 
-## What Changed in This Class
-- Updated `Dockerfile` — two named stages: `builder` (all deps, full source) and
-  `production` (prod deps only, selective COPY from builder, `USER node`)
+## Your Mission
+- The production image produced by `docker build -t jcc-app:prod .` must be
+  under 120 MB.
+- `docker run --rm jcc-app:prod whoami` must NOT output `root`.
+- The application must still serve all endpoints correctly: `/health`,
+  `/api/programs`, and `/api/applicants`.
+- The `node_modules` directory in the production image must contain zero
+  devDependencies. Verify this by checking that `nodemon` is absent.
+- The same Dockerfile must produce both a build stage (unlimited size, all
+  tools) and the final production stage (lean, runtime-only).
 
-## Hands-On Exercise
-1. Build the multi-stage image: `docker build -t jcc-platform:class-08 .`
-2. Compare image sizes:
-   ```
-   docker images | grep jcc-platform
-   ```
-   The class-08 image should be noticeably smaller than class-06/07 (no devDependencies).
-3. Run the production image: `docker run -p 3000:3000 jcc-platform:class-08`
-   The app works exactly the same from the browser's perspective.
-4. Verify the non-root user: `docker run --rm jcc-platform:class-08 whoami`
-   Output should be `node`, not `root`.
-5. Try to install something as the node user:
-   `docker run --rm jcc-platform:class-08 npm install -g cowsay`
-   It should fail with a permission error — exactly what we want.
-6. Inspect what's in the final image:
-   `docker run --rm jcc-platform:class-08 ls /app`
-   You should see only `public/`, `server.js`, `config.js`, `package.json`,
-   `package-lock.json`, and `node_modules/` — nothing else.
-7. Confirm no devDependencies: `docker run --rm jcc-platform:class-08 ls node_modules | grep nodemon`
-   Should return empty — nodemon is not present.
+## What You Need to Know First
+- **Multi-stage build**: A Dockerfile with more than one `FROM` instruction.
+  Each `FROM` starts a new stage with a clean filesystem. Only the last stage
+  is written into the final image.
+- **`AS <name>`**: Gives a build stage a name so it can be referenced later.
+- **`COPY --from=<stage>`**: Copies files from a named or numbered build
+  stage into the current stage. This is how artefacts move from the build
+  environment to the production environment.
+- **devDependencies vs dependencies**: `npm install --omit=dev` installs only
+  `dependencies` in `package.json`, skipping `devDependencies`. Running this
+  in the production stage is what removes test and tooling packages.
+- **Principle of least privilege**: Grant a process only the permissions it
+  actually needs. For a web server on port 3000, that means running as a
+  non-root user with no ability to modify system files.
+- **UID 1000**: The `node:20-alpine` image ships with a built-in user named
+  `node` at UID 1000. `USER node` in a Dockerfile switches to that user for
+  all subsequent instructions and for the container process.
 
-## Key Concepts
+## Constraints
+- The solution must be a single Dockerfile with at least two named stages.
+  You may NOT create two separate Dockerfiles.
+- devDependencies must not appear in the production stage. You may NOT
+  achieve this by deleting `devDependencies` from `package.json`.
+- The production image must run as a non-root user. You may NOT use
+  `USER root` anywhere in the production stage.
+- You must verify both the image size and the running user with the exact
+  commands in the Verification section before considering the task complete.
 
-**Multi-stage builds**: A single Dockerfile can contain multiple `FROM` instructions. Each
-one starts a new stage with a clean filesystem. Stages can be named with `AS <name>`. You
-copy files between stages with `COPY --from=<stage-name> <src> <dst>`. Only the last stage
-is written into the final image; all previous stages are discarded after the build. This
-pattern is essential for compiled languages (Go, Rust, TypeScript) where you need a full
-compiler toolchain at build time but only a tiny runtime at deploy time. For Node.js, the
-benefit is eliminating devDependencies and any intermediate build files.
+## Verification
+```bash
+# Build the production image
+docker build -t jcc-app:prod .
 
-**Image size and attack surface**: Every megabyte in a Docker image is a megabyte that
-must be pulled from a registry, stored on every node in your cluster, and scanned by
-security tools. More importantly, every installed package is a potential vulnerability.
-A smaller image has fewer packages, fewer CVEs, and a simpler security audit. Multi-stage
-builds are the single most effective technique for shrinking production images without
-changing any application code.
+# Size check — must be under 120 MB
+docker images jcc-app:prod --format "{{.Size}}"
 
-**Non-root USER**: By default, processes inside a Docker container run as `root` (UID 0).
-Root inside a container is not the same as root on the host (thanks to Linux namespaces),
-but it is still far more permissive than necessary. The `node:20-alpine` image ships with
-a built-in `node` user (UID 1000). Adding `USER node` before `CMD` means the Node.js
-process runs with no ability to modify system files, install packages globally, or bind
-to privileged ports (< 1024). Port 3000 is above the privileged threshold so this
-restriction does not affect us. This is the principle of least privilege applied to
-containers: grant only the permissions actually required, nothing more.
+# User check — must NOT be "root"
+docker run --rm jcc-app:prod whoami
 
-## Next Class Preview
-Coming up: we add Docker Compose to orchestrate the application alongside a PostgreSQL
-database, replacing our in-memory store with real persistent storage.
+# devDependency check — nodemon must be absent
+docker run --rm jcc-app:prod ls /app/node_modules | grep nodemon
+# Expected: empty output (no match)
+
+# Application check
+docker run -d -p 3000:3000 --name jcc-prod-test jcc-app:prod
+curl localhost:3000/health
+curl localhost:3000/api/programs
+docker stop jcc-prod-test && docker rm jcc-prod-test
+```
+
+## Stretch Challenge
+Install `trivy` (a container vulnerability scanner) or use `docker scout cves`
+if Scout is available. Run a scan against `jcc-app:prod`. List every CRITICAL
+and HIGH CVE in the output. For each one, identify which package carries it,
+whether updating that package or choosing a different base image tag would
+resolve it, and whether it is exploitable in this application's threat model.
+Pick one CVE and resolve it. Re-run the scan to confirm it is gone.
+
+## Instructor Notes
+Multi-stage builds are not an advanced technique — they are the baseline
+expectation for any production container. The 680 MB / 47 CVE numbers are
+realistic for a Node project that naively copies everything into one stage.
+The stretch challenge with Trivy introduces the security scanning workflow
+that appears in Class 36; seeing it here, informally, means students arrive
+at that class with context rather than starting cold. The most common wrong
+approach is trying to `RUN npm prune --production` in a single-stage build
+after the fact — this is fragile and does not remove binaries installed by
+dev tools. The correct solution is a clean production stage that never
+installs devDependencies in the first place.
