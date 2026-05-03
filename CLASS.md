@@ -1,53 +1,46 @@
-# Class 34 — GitOps: ArgoCD — Git IS the Source of Truth
+# Class 35 — GitOps: Kustomize Multi-Environment Promotion
 
 ## The Scenario
-Jenkins deploys to Kubernetes but a developer ran `kubectl edit deployment backend`
-directly in production — changed replica count and a memory limit. Jenkins does not
-know. The desired state in Git and the actual state in the cluster have silently
-diverged. The next Jenkins deploy overwrites the change without warning. Half the team
-uses kubectl, half uses Jenkins, and nobody knows what is actually running.
+Promoting from dev to production requires logging into Jenkins, finding the right job,
+entering the image tag manually, and hoping the correct person approves. Last month
+the wrong tag was entered — an older image went to production. Nobody noticed for
+6 hours because no diff was shown, no change was recorded, and the process was
+completely undocumented.
 
 ## The Problem
-There is no single source of truth. Cluster state is mutated by at least three
-mechanisms: Jenkins pipelines, direct kubectl commands, and Helm installs done by hand.
-Git shows one thing. The cluster runs another. Auditing who changed what is impossible
-because kubectl changes leave no Git trail.
+Promotion is a verbal process. A developer says "deploy sha-abc123 to production" in
+Slack. Someone logs into Jenkins and types it. There is no record of what changed, no
+review step, no way to see the diff between what is running and what is about to run.
+Rollback means typing a different SHA into the same box.
 
 ## Your Mission
-- Install ArgoCD into the cluster and access the UI via port-forward.
-- Apply the `jcc` AppProject to restrict sources and destinations.
-- Apply `argocd-app-dev.yaml` — verify it shows "Synced" and "Healthy".
-- Manually change the backend replica count with `kubectl edit` in jcc-dev.
-- ArgoCD must detect the change and display "OutOfSync" within 3 minutes (default poll).
-- Trigger a sync from the UI or CLI — verify the replica count returns to what Git says.
-- Apply `argocd-app-production.yaml` — confirm syncPolicy is manual (no auto-sync).
+- Build Kustomize overlays for `dev` and `production` that extend the shared base.
+- Dev overlay: namespace `jcc-dev`, replicas 1, image tag `:dev`.
+- Production overlay: namespace `jcc-production`, replicas 3, image tag pinned to a SHA.
+- Validate locally: `kubectl kustomize gitops/environments/dev | grep image`.
+- Simulate a promotion: update the production image tag, commit, open a PR — the diff must show exactly one changed line.
+- ArgoCD must show `jcc-production` OutOfSync after the merge, and display the image tag diff before you sync.
 
 ## Constraints
-- The production Application must never auto-sync — every production change is a deliberate human action.
-- ArgoCD must be installed in the `argocd` namespace, isolated from application namespaces.
-- All ArgoCD Application and AppProject manifests must live in Git, not be created via the UI.
+- No environment-specific YAML may duplicate any field already set in the base.
+- The production image tag must be a SHA digest — never `:latest` in production.
+- Promotion must be a PR; direct pushes to main are not acceptable.
 
 ## Verification
 ```bash
-argocd app get jcc-dev
-# Expected: Sync Status: Synced, Health Status: Healthy
+# Render dev overlay — confirm namespace, replicas, and image tag
+kubectl kustomize gitops/environments/dev | grep -E "namespace:|replicas:|image:"
 
-kubectl scale deployment/backend --replicas=5 -n jcc-dev
-# Wait up to 3 minutes, then:
-argocd app get jcc-dev | grep "Sync Status"
-# Expected: Sync Status: OutOfSync
-
-argocd app sync jcc-dev
-kubectl get deployment backend -n jcc-dev -o jsonpath='{.spec.replicas}'
-# Expected: 2 (whatever Git says)
+# Render production overlay — confirm 3 replicas and SHA tag
+kubectl kustomize gitops/environments/production | grep -E "namespace:|replicas:|image:"
 ```
 
 ## Stretch Challenge
-Configure ArgoCD notifications to post a Slack message whenever jcc-production drifts
-to OutOfSync — before anyone has touched the cluster manually.
+Write a GitHub Actions workflow that automatically opens the promotion PR when CI
+pushes a new image SHA to GHCR — no human needs to touch a text editor to promote.
 
 ## Instructor Notes
-ArgoCD's self-healing loop exposes the most important truth in modern infrastructure:
-if a change is not in Git, it does not exist — it will be overwritten. The drift
-detection exercise makes this visceral. Students who feel the OutOfSync alert fire are
-students who stop using `kubectl edit` in production forever.
+Kustomize overlays solve the copy-paste problem that kills most multi-environment
+setups. The moment students see a one-line PR as a production deployment, the idea
+of typing image tags into Jenkins forms becomes unthinkable. The promotion workflow
+document is the artifact that keeps working after the course ends.

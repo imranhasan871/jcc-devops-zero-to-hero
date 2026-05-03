@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: jcc-production
+
+bases:
+  - ../base
+
+# PROMOTION: update this tag via a PR — never manually, never in the UI.
+# The PR diff IS the change record. The merge IS the deployment trigger.
+images:
+  - name: ghcr.io/imranhasan871/jcc-devops-zero-to-hero/jcc-app
+    newTag: sha-a1b2c3d4   # update this value to promote a new image
+
+patchesStrategicMerge:
+  - patch-deployment.yaml
+
+commonLabels:
+  environment: production

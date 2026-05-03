@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: jcc-dev
+
+bases:
+  - ../base
+
+# Override the image tag for dev — always tracks :dev built from main branch
+images:
+  - name: ghcr.io/imranhasan871/jcc-devops-zero-to-hero/jcc-app
+    newTag: dev
+
+patchesStrategicMerge:
+  - patch-deployment.yaml
+
+commonLabels:
+  environment: dev
