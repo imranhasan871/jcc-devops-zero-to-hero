@@ -1,66 +1,96 @@
 # Class 06 — First Dockerfile
 
-## Objective
-A Dockerfile is a recipe for building a container image — a portable, self-contained
-snapshot of your application and everything it needs to run. Once built, the image runs
-identically on your laptop, a teammate's Windows machine, a CI server, and a production
-cloud instance. This class introduces the five core Dockerfile instructions and produces
-a working image for the JCC platform.
+## The Scenario
+The ops team at JCC has refused to deploy the platform. Their exact words in
+Slack: "It works on Sarah's MacBook, crashes on Tom's Linux box, and the
+staging server doesn't even have the right Node version. We're not touching
+it until it ships as a container." The CTO has given you 48 hours to produce
+a Docker image that runs identically everywhere. The client demo is in three
+days.
 
-## What You'll Learn
-- What a Docker image is and how it relates to a container
-- The five essential Dockerfile instructions: `FROM`, `WORKDIR`, `COPY`, `RUN`, `CMD`
-- The difference between build time and runtime in Docker
-- How to build an image and run a container locally
-- Why Alpine Linux is a popular base image choice
+## The Problem
+The JCC Express application has no Dockerfile. Every deployment is a manual,
+environment-specific process that depends on the host having the correct
+version of Node, the correct system libraries, and the correct environment
+variables pre-configured. There is no reproducible way to run this application
+on a machine other than the developer's own laptop.
 
-## What Changed in This Class
-- Added `Dockerfile` — single-stage build: FROM node:20-alpine, COPY all files,
-  RUN npm install (prod only), EXPOSE 3000, CMD node server.js
+## Your Mission
+- The command `docker build -t jcc-app .` must complete without errors.
+- The command `docker run -p 3000:3000 jcc-app` must start the Express
+  server and keep it running.
+- `curl http://localhost:3000/health` must return `{"status":"ok"}`.
+- The host machine must have no Node.js installed for this to still work.
+  Docker itself is the only required dependency.
+- The image must use `node:20-alpine` as its base. No other base is
+  acceptable.
+- Every instruction in the Dockerfile must have a comment explaining not
+  what it does syntactically, but what production problem it solves — why
+  a team would care if that line were missing.
 
-## Hands-On Exercise
-1. Build the image: `docker build -t jcc-platform:class-06 .`
-   Watch the output — each instruction is a separate step.
-2. List your local images: `docker images | grep jcc-platform`
-3. Run a container: `docker run -p 3000:3000 jcc-platform:class-06`
-4. Open `http://localhost:3000` in your browser. The app works exactly as before.
-5. In another terminal, check running containers: `docker ps`
-6. Stop the container: `docker stop <container-id>` (use the ID from `docker ps`).
-7. Run it with an overridden port: `docker run -p 4000:3000 -e PORT=3000 jcc-platform:class-06`
-   Access it on `http://localhost:4000`.
-8. Inspect the layers: `docker history jcc-platform:class-06`
-   Notice how each instruction produced a layer of different sizes.
+## What You Need to Know First
+- **Docker image**: A portable, read-only snapshot of a filesystem and its
+  runtime configuration. Built once, runs anywhere Docker is installed.
+- **Dockerfile**: A plain-text recipe that describes how to assemble an
+  image, one instruction at a time.
+- **FROM**: Declares the base image — the starting filesystem your image is
+  built on top of.
+- **WORKDIR**: Sets the working directory for subsequent instructions and
+  for the process that runs at container start.
+- **COPY**: Copies files from the host machine (build context) into the
+  image filesystem.
+- **RUN**: Executes a shell command during the build and commits the result
+  as a new image layer.
+- **CMD**: The default command that runs when a container starts. Not
+  executed at build time.
+- **Alpine Linux**: A minimal Linux distribution (~5 MB). Used as a base to
+  keep images small and reduce the number of pre-installed packages that
+  could carry vulnerabilities.
 
-## Dockerfile Instructions Explained
+## Constraints
+- You may NOT look up a Dockerfile tutorial or copy one from the internet
+  during this exercise. Write it from the concepts above.
+- The base image must be `node:20-alpine`. No Debian, no Ubuntu, no
+  `node:latest`.
+- `node_modules` from the host must NOT be copied into the image. The image
+  must install its own dependencies during the build.
+- Every Dockerfile instruction must carry a comment that explains the
+  production reason for its existence — not the syntax.
 
-**FROM node:20-alpine**: Every Dockerfile must start with FROM. It names the base image
-to build upon. `node:20-alpine` gives us a Linux environment with Node.js 20 pre-installed,
-built on Alpine — a security-focused, minimal Linux distribution that results in images
-roughly 5× smaller than the default Debian-based node image. Always pin to a major version
-tag (not `latest`) so builds are reproducible.
+## Verification
+```bash
+# Step 1 — build
+docker build -t jcc-app .
 
-**WORKDIR /app**: Sets the current directory for all following instructions. Think of it
-as `mkdir /app && cd /app`. Using a dedicated directory (conventionally `/app`) keeps
-your application files separate from system files in the image.
+# Step 2 — run in background
+docker run -d -p 3000:3000 --name jcc-test jcc-app
 
-**COPY . .**: Copies everything from your local project directory (the "build context")
-into the container's working directory. The first `.` is "everything here on my machine",
-the second `.` is "into the current WORKDIR in the image".
+# Step 3 — health check
+curl http://localhost:3000/health
+# Expected: {"status":"ok"}
 
-**RUN npm install --omit=dev**: Executes a shell command inside the image during the build.
-`--omit=dev` skips devDependencies so `nodemon`, `eslint`, and `jest` are not included —
-they are only needed during development, not at runtime. Every `RUN` creates a new
-immutable layer in the image.
+# Step 4 — check image size (must be under 300 MB)
+docker images jcc-app --format "{{.Size}}"
 
-**EXPOSE 3000**: Declares that the container listens on port 3000. This is documentation
-for humans and orchestration tools — it does not open any ports by itself. You still pass
-`-p 3000:3000` to `docker run` to map the container port to your host.
+# Step 5 — clean up
+docker stop jcc-test && docker rm jcc-test
+```
 
-**CMD ["node", "server.js"]**: The default command that runs when the container starts.
-Using the JSON array form (exec form) avoids wrapping the process in `/bin/sh -c`, which
-means Docker's `SIGTERM` signal for graceful shutdown reaches Node.js directly instead
-of being swallowed by the shell.
+## Stretch Challenge
+Run `docker exec <container-id> whoami` while the container is running. You
+will see `root`. Research why running a production process as root inside a
+container is a security problem even with Linux namespaces in place. Find the
+one-line Dockerfile change that makes the process run as a non-root user, and
+apply it. Verify with `whoami` again. Document one real CVE or incident report
+where a root container process was the contributing factor.
 
-## Next Class Preview
-We add `.dockerignore` to speed up builds and learn why the order of `COPY` and `RUN`
-instructions dramatically affects how often Docker can reuse its cached layers.
+## Instructor Notes
+The first Dockerfile students write almost always makes two mistakes: they copy
+`node_modules` from the host (which breaks on architecture differences between
+macOS and Linux), and they run as root without realising it. The comment
+requirement is deliberate — it forces students to understand each instruction
+rather than cargo-culting a template. Expect pushback on the "no tutorial"
+constraint; hold the line. The stretch challenge plants the seed for Class 08
+without giving away the multi-stage pattern. The root-user problem is one of
+the most common findings in container security audits; students who discover it
+themselves remember it.
