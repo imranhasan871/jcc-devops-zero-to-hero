@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>John Casablancas Centers — Applicant Portal</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; background: #f4f6f8; color: #333; }
+    header { background: #1a1a2e; color: #fff; padding: 1rem 2rem; }
+    header h1 { font-size: 1.6rem; }
+    main { max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+    section { background: #fff; border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem;
+              box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+    h2 { margin-bottom: 1rem; color: #1a1a2e; }
+    .programs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; }
+    .program-card { border: 1px solid #ddd; border-radius: 6px; padding: 1rem; background: #fafafa; }
+    .program-card h3 { font-size: 1rem; margin-bottom: 0.5rem; }
+    .program-card p  { font-size: 0.85rem; color: #666; }
+    form label { display: block; margin-bottom: 0.25rem; font-weight: bold; font-size: 0.9rem; }
+    form input, form select { width: 100%; padding: 0.5rem; margin-bottom: 1rem;
+                               border: 1px solid #ccc; border-radius: 4px; font-size: 1rem; }
+    form button { background: #1a1a2e; color: #fff; padding: 0.6rem 1.4rem;
+                  border: none; border-radius: 4px; cursor: pointer; font-size: 1rem; }
+    form button:hover { background: #16213e; }
+    .applicant-list { list-style: none; }
+    .applicant-list li { padding: 0.6rem 0; border-bottom: 1px solid #eee; font-size: 0.95rem; }
+    .applicant-list li:last-child { border-bottom: none; }
+    .badge { display: inline-block; background: #e0f0ff; color: #0066cc;
+             font-size: 0.75rem; padding: 0.1rem 0.5rem; border-radius: 10px; margin-left: 0.5rem; }
+    .empty-msg { color: #999; font-style: italic; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>John Casablancas Centers</h1>
+    <p style="margin-top:0.25rem;font-size:0.9rem;opacity:0.8;">Applicant Management Portal</p>
+  </header>
+
+  <main>
+    <!-- Programs -->
+    <section>
+      <h2>Available Programs</h2>
+      <div class="programs-grid" id="programs-grid">
+        <!-- populated by JS -->
+      </div>
+    </section>
+
+    <!-- Application Form -->
+    <section>
+      <h2>Apply Now</h2>
+      <form id="application-form">
+        <label for="name">Full Name</label>
+        <input type="text" id="name" placeholder="Jane Doe" required />
+
+        <label for="email">Email Address</label>
+        <input type="email" id="email" placeholder="jane@example.com" required />
+
+        <label for="program">Select Program</label>
+        <select id="program" required>
+          <option value="">-- Choose a program --</option>
+        </select>
+
+        <button type="submit">Submit Application</button>
+      </form>
+    </section>
+
+    <!-- Applicants List -->
+    <section>
+      <h2>Applicants</h2>
+      <ul class="applicant-list" id="applicant-list">
+        <li class="empty-msg">No applicants yet.</li>
+      </ul>
+    </section>
+  </main>
+
+  <script>
+    // ── Data ──────────────────────────────────────────────────────────────────
+    const PROGRAMS = [
+      { id: 1, name: "Fashion Modeling",     duration: "6 months",  seats: 20 },
+      { id: 2, name: "Commercial Acting",    duration: "4 months",  seats: 15 },
+      { id: 3, name: "Personal Development", duration: "3 months",  seats: 30 },
+      { id: 4, name: "Runway & Posing",      duration: "5 months",  seats: 12 },
+    ];
+
+    const STORAGE_KEY = "jcc_applicants";
+
+    function loadApplicants() {
+      try {
+        return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+      } catch (e) {
+        return [];
+      }
+    }
+
+    function saveApplicants(list) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+    }
+
+    // ── Render programs ───────────────────────────────────────────────────────
+    function renderPrograms() {
+      const grid = document.getElementById("programs-grid");
+      const select = document.getElementById("program");
+      grid.innerHTML = "";
+      select.innerHTML = '<option value="">-- Choose a program --</option>';
+
+      PROGRAMS.forEach(p => {
+        // card
+        const card = document.createElement("div");
+        card.className = "program-card";
+        card.innerHTML = `<h3>${p.name}</h3>
+          <p>Duration: ${p.duration}</p>
+          <p>Seats: ${p.seats}</p>`;
+        grid.appendChild(card);
+
+        // dropdown option
+        const opt = document.createElement("option");
+        opt.value = p.id;
+        opt.textContent = p.name;
+        select.appendChild(opt);
+      });
+    }
+
+    // ── Render applicants ─────────────────────────────────────────────────────
+    function renderApplicants() {
+      const ul = document.getElementById("applicant-list");
+      const applicants = loadApplicants();
+
+      if (applicants.length === 0) {
+        ul.innerHTML = '<li class="empty-msg">No applicants yet.</li>';
+        return;
+      }
+
+      ul.innerHTML = applicants.map(a => {
+        const prog = PROGRAMS.find(p => p.id === Number(a.programId));
+        return `<li>
+          <strong>${a.name}</strong> — ${a.email}
+          <span class="badge">${prog ? prog.name : "Unknown"}</span>
+        </li>`;
+      }).join("");
+    }
+
+    // ── Form submit ───────────────────────────────────────────────────────────
+    document.getElementById("application-form").addEventListener("submit", function(e) {
+      e.preventDefault();
+      const name      = document.getElementById("name").value.trim();
+      const email     = document.getElementById("email").value.trim();
+      const programId = document.getElementById("program").value;
+
+      if (!name || !email || !programId) return;
+
+      const applicants = loadApplicants();
+      applicants.push({ id: Date.now(), name, email, programId, appliedAt: new Date().toISOString() });
+      saveApplicants(applicants);
+
+      this.reset();
+      renderApplicants();
+      alert(`Application submitted for ${name}!`);
+    });
+
+    // ── Init ──────────────────────────────────────────────────────────────────
+    renderPrograms();
+    renderApplicants();
+  </script>
+</body>
+</html>
