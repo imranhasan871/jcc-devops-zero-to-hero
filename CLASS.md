@@ -1,88 +1,90 @@
-# Class 31 — Terraform: Infrastructure as Code Intro
+# Class 32 — Terraform: Remote State + Modules
 
 ## Objective
-Clicking in cloud consoles is not reproducible, not reviewable, and not recoverable. When your
-production RDS instance was created by clicking through the AWS console 18 months ago with no
-documentation, a DR drill becomes a guessing game. Terraform makes your infrastructure a Git
-commit: versioned, diffable, peer-reviewed, and exactly reproducible. `terraform destroy &&
-terraform apply` recreates your entire environment identically, from scratch, in minutes.
+The local state file on an engineer's laptop is a single point of failure. Modules prevent
+copy-paste infrastructure across environments. This class addresses both: moving state to S3
+with DynamoDB locking so any engineer on any machine can run Terraform safely, and extracting
+VPC and RDS into reusable modules that enforce consistent configuration across dev and
+production while allowing environment-specific sizing.
 
 ## Why This Matters in Production
-A team at a mid-size SaaS company had a production database fail. The recovery runbook said
-"restore the DB." Nobody knew which VPC, which subnet group, which security group, which
-PostgreSQL parameter group, or what backup retention was configured. The recreation took 4
-hours of guessing while production was down. With Terraform: open `terraform/rds.tf`, read
-the exact configuration, run `terraform apply`, done in 15 minutes. ClickOps infrastructure
-is undocumented by definition. Every senior cloud engineer has a version of this story.
-HashiCorp reports over 14 million Terraform downloads per month — it is the industry standard.
+A team's lead infrastructure engineer resigned. Their laptop was returned to IT and wiped. The
+Terraform state file — mapping configuration to 47 real AWS resources — was on that laptop and
+only that laptop. Running `terraform apply` without state would have attempted to create 47
+new resources while the originals kept running, resulting in duplicate infrastructure, billing
+chaos, and a state reconciliation nightmare. Remote state in S3 with versioning means: the
+state file is never on any one person's machine, every change is versioned and recoverable,
+and DynamoDB locking prevents two engineers from applying simultaneously and corrupting state.
 
 ## What You'll Learn
-- The difference between declarative IaC (Terraform) and imperative scripting (bash + AWS CLI)
-- The `init / plan / apply / destroy` lifecycle and what each step does
-- What the state file is, why it matters, and why it must never be committed to Git
-- How `sensitive = true` prevents passwords from appearing in plan output
-- Why `terraform plan` must always precede `terraform apply` — even for small changes
-- How `default_tags` in the provider block ensures consistent tagging across all resources
+- How S3 + DynamoDB backend works: what happens during init, plan, apply, and on concurrent access
+- How Terraform modules work: inputs via variables, outputs via outputs, no access to internals
+- The DRY principle applied to infrastructure: one module definition, used for all environments
+- The directory-per-environment pattern vs Terraform workspaces — when to use each
+- How module output chaining works: `module.vpc.private_subnet_ids` feeds into `module.rds`
 
 ## What Changed in This Class
-- `terraform/main.tf` — terraform block with version constraints, local backend, AWS provider
-- `terraform/variables.tf` — input variables including db_password with sensitive=true
-- `terraform/outputs.tf` — vpc_id, subnet_ids, rds_endpoint exposed as outputs
-- `terraform/vpc.tf` — VPC, 2 public subnets, 2 private subnets, IGW, route tables
-- `terraform/security_groups.tf` — app SG (80/443 open), RDS SG (5432 from app SG only)
-- `terraform/rds.tf` — PostgreSQL 15.4 on db.t3.micro in private subnets
-- `terraform/.gitignore` — excludes *.tfstate, *.tfvars, .terraform/
-- `terraform/terraform.tfvars.example` — committed template showing variable structure
-- `Makefile` — added tf-init, tf-plan, tf-apply, tf-destroy, tf-fmt, tf-validate targets
+- `terraform/modules/vpc/main.tf` — reusable VPC module using `cidrsubnet()` for subnet calculation
+- `terraform/modules/vpc/variables.tf` — module input contract: app_name, environment, region, vpc_cidr
+- `terraform/modules/vpc/outputs.tf` — module output contract: vpc_id, subnet IDs
+- `terraform/modules/rds/main.tf` — reusable RDS module accepting vpc_id and subnet_ids from vpc module
+- `terraform/modules/rds/variables.tf` — inputs including instance_class and allocated_storage for sizing
+- `terraform/modules/rds/outputs.tf` — endpoint, port, db_name, security_group_id
+- `terraform/environments/dev/main.tf` — dev environment calling both modules with small sizing
+- `terraform/environments/production/main.tf` — production calling same modules with production sizing
+- `terraform/main.tf` — updated to show S3 backend config as commented instructions
 
 ## Concept Deep Dive
 
-**Declarative vs imperative IaC** — A bash script that calls `aws ec2 create-vpc` is
-imperative: it describes steps to execute. If the VPC already exists, the script creates a
-second one, or errors. Terraform is declarative: you describe the desired state, and Terraform
-figures out the steps to reach it. Running `terraform apply` twice is safe — the second run
-finds no drift and makes no changes. This idempotency is the core property that makes
-Terraform usable in CI/CD without guards against double-execution.
+**Remote state backends** — The S3 backend stores state in an S3 object and uses a DynamoDB
+item as a mutex (lock). When `terraform apply` starts it writes a lock item to DynamoDB. Any
+concurrent apply attempt finds the lock and either waits or exits with a "state is locked"
+error, preventing corruption. When the apply finishes the lock is released. S3 versioning
+means every state change is stored as a new object version — you can roll back to a previous
+state if a plan goes wrong. Terraform Cloud provides the same capability as a managed service
+with a UI, audit log, and Sentinel policy enforcement.
 
-**The state file** — Terraform's state file (`terraform.tfstate`) is the mapping between your
-configuration and the real cloud resources. It stores resource IDs, attribute values, and
-dependency relationships. Without state, Terraform cannot know that `aws_vpc.main` in your
-config corresponds to `vpc-0abc123` in AWS. The state file can contain sensitive values (RDS
-passwords, certificate private keys) which is why it must never be committed to Git and must
-be stored in a secure, shared backend (S3 + DynamoDB in class-32).
+**Module input/output contracts** — A module's `variables.tf` is its API. Callers must
+provide all required variables and may override optional ones. A module's `outputs.tf` is its
+public interface — callers can reference outputs but cannot access internal resource attributes
+directly. This encapsulation is what makes modules reusable: the vpc module does not know or
+care whether its caller is a dev environment or production, a single-region deployment or
+multi-region. Changes inside the module that don't change the interface are invisible to callers.
 
-**Always plan before apply** — `terraform plan` reads current state, queries AWS for actual
-resource attributes, computes the diff, and shows you exactly what will be created, modified,
-or destroyed before any change is made. A common war story: an engineer runs `terraform apply`
-without planning, not realizing a variable change would trigger a database replacement
-(`-/+ destroy and then create replacement`). RDS replacements delete the original instance
-first. The plan would have shown this in red with `# forces replacement`. Always plan.
+**Directory-per-environment vs workspaces** — Terraform workspaces let you maintain multiple
+state files from one configuration directory by switching with `terraform workspace select`.
+This sounds convenient but creates coupling: a change to the configuration affects every
+workspace simultaneously. The directory-per-environment pattern (this class) is more explicit:
+each environment has its own directory, its own state, and its own variable values. A plan in
+dev has zero chance of accidentally affecting production. For most teams the clarity of
+directory-per-environment outweighs the repetition that modules eliminate anyway.
 
 ## Hands-On Exercise
-1. Install Terraform: `brew install terraform` or download from developer.hashicorp.com
-2. Initialize: `make tf-init` — downloads the AWS provider plugin
-3. Validate syntax: `make tf-validate`
-4. Check formatting: `make tf-fmt`
-5. Preview changes: `cd terraform && terraform plan -var="environment=dev" -var="db_password=testonly"`
-   Read the output carefully — how many resources will be created?
-6. Note: `db_password` shows as `(sensitive value)` in plan output — this is correct
-7. Do NOT apply yet — class-32 first sets up remote state so the state file is not local
+1. Validate each module independently:
+   `cd terraform/modules/vpc && terraform validate`
+   `cd terraform/modules/rds && terraform validate`
+2. Observe the module chaining in environments/dev/main.tf — `module.vpc.private_subnet_ids` passes VPC outputs to RDS inputs
+3. To test with real state (requires AWS account):
+   a. Create the S3 bucket and DynamoDB table (commands in main.tf comments)
+   b. Create a `backend-dev.hcl` file with bucket/key/region/table values
+   c. `cd terraform/environments/dev && terraform init -backend-config=../../backend-dev.hcl`
+   d. `terraform plan -var="db_password=testonly"` — observe the plan uses module resources
+4. Delete `.terraform/` and re-init — state is recovered from S3, nothing is lost
 
 ## Common Mistakes
-1. **Committing the state file** — `terraform.tfstate` is generated automatically and contains
-   resource IDs and sometimes sensitive values. It belongs in `.gitignore` immediately. If it
-   gets committed, rotate any sensitive values it contains and remove it from history with
-   `git filter-branch` or `git-filter-repo`.
-2. **Running `terraform apply` without reviewing the plan** — The apply command shows the plan
-   again and asks for confirmation, but engineers in a hurry type `yes` without reading. In CI
-   always save the plan to a file (`terraform plan -out=tfplan`) and apply only that file
-   (`terraform apply tfplan`), which skips the interactive prompt and guarantees you apply
-   exactly what was reviewed.
-3. **Hardcoding sensitive values** — `db_password = "mysecretpassword"` in any `.tf` file is
-   committed to Git history. Use `variable "db_password" { sensitive = true }` and pass it
-   via `TF_VAR_db_password` environment variable from your CI secrets store. The variable
-   file approach (`terraform.tfvars`) is acceptable only if the file is in `.gitignore`.
+1. **Importing the module path incorrectly** — `source = "../../modules/vpc"` must be a path
+   relative to the calling file, not the project root. Getting this wrong produces a confusing
+   "module not found" error. Always run `terraform init` after changing any `source` value —
+   Terraform downloads and caches modules during init, not during plan.
+2. **Accessing module internals directly** — `module.vpc.aws_vpc.this.id` does not work.
+   Modules expose only what is declared in `outputs.tf`. If a caller needs a value, add it to
+   the module's outputs. This is not a limitation — it is the contract that makes modules
+   safe to refactor internally without breaking callers.
+3. **Using one state file for all environments** — Even with modules, if dev and production
+   share a state file a `terraform plan` for dev computes diffs against production resources.
+   A mistake in dev's apply can modify production. Always use separate state keys or separate
+   directories per environment. State isolation is non-negotiable for production safety.
 
 ## Next Class Preview
-Class 32 extracts the VPC and RDS into reusable modules and switches to S3 remote state with
-DynamoDB locking — so the state file is never on any engineer's laptop.
+Class 33 adds `terraform/eks.tf` to provision the Kubernetes cluster itself — completing the
+full stack from raw cloud infrastructure to running application.
