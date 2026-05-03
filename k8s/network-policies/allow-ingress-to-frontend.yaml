@@ -1,0 +1,25 @@
+# Allow the nginx ingress controller to reach frontend pods on port 80.
+# Without this policy the ingress controller (in ingress-nginx namespace)
+# cannot forward external HTTP/S traffic into the jcc-production namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-frontend
+  namespace: jcc-production
+spec:
+  podSelector:
+    matchLabels:
+      app: jcc-frontend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 80

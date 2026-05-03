@@ -1,0 +1,14 @@
+# Default deny-all: the correct starting point for zero-trust pod networking.
+# Once applied, NO pod in this namespace can send or receive any traffic
+# until an explicit allow policy is added. Apply this first, then layer
+# allow rules for each required communication path.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: jcc-production
+spec:
+  podSelector: {}       # empty selector matches ALL pods in the namespace
+  policyTypes:
+    - Ingress
+    - Egress

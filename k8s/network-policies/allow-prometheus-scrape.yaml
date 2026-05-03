@@ -1,0 +1,26 @@
+# Allow Prometheus (in the monitoring namespace) to scrape /metrics from
+# backend pods on port 3001. Uses namespaceSelector + podSelector (AND logic)
+# so only Prometheus pods in the monitoring namespace match — not all pods
+# in monitoring, and not pods labelled app=prometheus in other namespaces.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape
+  namespace: jcc-production
+spec:
+  podSelector:
+    matchLabels:
+      app: jcc-backend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - protocol: TCP
+          port: 3001

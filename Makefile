@@ -114,3 +114,13 @@ rbac-verify: ## Verify ServiceAccount permissions with kubectl auth can-i
 	@echo "=== jcc-backend SA: should be denied ==="
 	kubectl auth can-i delete pods --as=system:serviceaccount:jcc-production:jcc-backend -n jcc-production || true
 	kubectl auth can-i create deployments --as=system:serviceaccount:jcc-production:jcc-backend -n jcc-production || true
+
+## ── Network Policies ─────────────────────────────────────────────
+netpol-apply: ## Apply all NetworkPolicies
+	kubectl apply -f k8s/network-policies/
+
+netpol-verify: ## List policies and test a connection that should be blocked
+	kubectl get networkpolicies -n jcc-production
+	@echo "=== Testing: backend should NOT reach kube-apiserver ==="
+	kubectl exec -n jcc-production deploy/backend -- \
+	  curl -s --max-time 3 https://kubernetes.default.svc || echo "BLOCKED (expected)"
