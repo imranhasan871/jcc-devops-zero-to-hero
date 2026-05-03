@@ -1,59 +1,92 @@
-# Class 16 — K8s Deployment + Service
+# Class 16 — Deploy to Kubernetes (and Fix What's Broken)
 
-## Objective
-Deploy the JCC backend to a local Kubernetes cluster using a Deployment and a
-Service. Understand how K8s ensures replicas stay healthy, and how a Service
-provides a stable network address for a dynamic set of pods.
+## The Scenario
+You've just joined the JCC platform team. Your first task: get the backend
+running on the staging Kubernetes cluster. A previous engineer left a
+`k8s/backend/deployment.yaml` in the repo. You apply it. Every pod enters
+`CrashLoopBackOff` or `ImagePullBackOff` within seconds. Your lead says:
+"Figure out what's wrong — I'm in meetings all day." There are no Slack threads
+to search. You have `kubectl` and nothing else.
 
-## What You'll Learn
-- How to write a Kubernetes `Deployment` manifest
-- What `replicas`, `selector`, and `template` mean
-- How readiness and liveness probes protect your application
-- What a `ClusterIP` Service does and how it selects pods
-- How resource requests and limits protect the cluster
+## The Problem
+The `deployment.yaml` has three bugs. The cluster will tell you exactly what
+they are — if you know where to look. Your job is to find all three, fix them,
+and deliver a healthy 2-replica deployment with a ClusterIP Service.
 
-## What Changed in This Class
-- Added `k8s/backend/deployment.yaml` — 2-replica deployment with health probes and resource limits
-- Added `k8s/backend/service.yaml` — ClusterIP Service on port 3000
-- Updated `Makefile` with `k8s-apply`, `k8s-status`, and `k8s-logs` targets
+## Your Mission
+1. Apply the existing broken manifests and observe the failure.
+2. Use only `kubectl describe pod` and `kubectl logs` to identify each bug.
+   For every bug, record: the exact command you ran, the error message returned,
+   and what you changed to fix it.
+3. Produce a working `k8s/backend/deployment.yaml` (2 replicas, image
+   `jcc-backend:latest`, container port 3000).
+4. Produce a working `k8s/backend/service.yaml` (ClusterIP, port 3000,
+   correct `selector` targeting your deployment's pods).
+5. Both pods must reach `Running 1/1` and pass readiness checks.
 
-## Hands-On Exercise
-1. Build the image locally: `make docker-build && docker tag jcc-app jcc-backend:latest`
-2. If using minikube: `minikube image load jcc-backend:latest`
-3. Apply resources: `make k8s-apply`
-4. Watch pods start: `kubectl get pods -n jcc-production -w`
-5. Check status: `make k8s-status`
-6. Forward a port to test: `kubectl port-forward svc/jcc-backend 3000:3000 -n jcc-production`
-7. Visit `http://localhost:3000/health` — traffic is load-balanced across both pods
-8. Delete a pod manually: `kubectl delete pod <name> -n jcc-production` — watch K8s recreate it
+## What You Need to Know First
+- `kubectl describe pod <name> -n <ns>` — shows events, image pull errors,
+  probe failures, exit codes.
+- `kubectl logs <pod> -n <ns>` — shows stdout/stderr from the container.
+- A pod in `ImagePullBackOff` cannot pull its image; check the image name and
+  tag first.
+- A pod in `CrashLoopBackOff` starts but exits non-zero; the logs contain the
+  reason.
+- Container port in the manifest is documentation — but if the Service targets
+  the wrong port, health probes and traffic both fail.
+- An app that crashes because an env var is missing will say so in its logs.
 
-## Key Concepts
+## Constraints
+- Use `kubectl describe pod` and `kubectl logs` only — no external debugging
+  tools, no editing YAML by guessing.
+- You must document all three bugs in a comment block at the top of your final
+  `deployment.yaml` using this format:
+  ```
+  # Bug 1: <command that revealed it> → <error text> → <fix applied>
+  # Bug 2: ...
+  # Bug 3: ...
+  ```
+- The `selector` in `service.yaml` must match the `labels` on the pod template
+  exactly — verify with `kubectl get endpoints -n jcc-production`.
+- Do not use `imagePullPolicy: Never` as a workaround; the image tag must be
+  correct.
 
-**Deployment vs Pod**
-You almost never create a Pod directly in Kubernetes. A raw Pod has no self-
-healing: if it crashes or the node it runs on fails, the pod is gone. A
-Deployment wraps pods in a `ReplicaSet` that constantly reconciles the actual
-count of running pods against the `replicas:` field. Delete a pod and the
-Deployment immediately schedules a replacement.
+## Verification
+```bash
+kubectl get pods -n jcc-production
+# Expected: two pods, STATUS=Running, READY=1/1
 
-**Readiness vs Liveness Probes**
-Both probes call `GET /health` on port 3000, but they serve different purposes:
-- **Liveness probe**: "Is this pod alive?" If it fails, K8s *restarts* the
-  container. Use it to detect deadlocks or hung processes.
-- **Readiness probe**: "Is this pod ready to receive traffic?" If it fails,
-  K8s *removes the pod from the Service's load balancer* but does not restart
-  it. Use it during startup (before the app finishes connecting to the database)
-  and during overload.
+kubectl get service -n jcc-production
+# Expected: backend-service, TYPE=ClusterIP, PORT(S)=3000/TCP
 
-**ClusterIP Service**
-A `ClusterIP` Service gets a stable virtual IP address inside the cluster.
-All pods with the label `app: jcc-backend` are registered as endpoints.
-Kubernetes routes requests to healthy, ready endpoints automatically. Because
-pods are ephemeral (they get new IPs on restart), the Service's stable IP is
-essential — consumers always use the Service address, never pod IPs directly.
+kubectl get endpoints backend-service -n jcc-production
+# Expected: two IP:3000 entries (one per pod)
 
-## Next Class Preview
-In Class 17 we inject configuration into our pods properly using a ConfigMap
-(for non-sensitive values) and a Secret (for passwords). We also update the
-Deployment to load these resources, and discuss why you should never commit
-real secrets to git.
+kubectl port-forward svc/backend-service 3000:3000 -n jcc-production &
+sleep 2
+curl -s localhost:3000/health
+# Expected: {"status":"ok"}
+```
+
+## Stretch Challenge
+Without editing any YAML file and without deleting the Deployment, change the
+replica count from 2 to 4 using a single `kubectl` command. Verify all four
+pods reach `Running`. Then scale back to 2. Identify two real-world scenarios
+where this imperative scale command is appropriate in production and two where
+it would be a bad idea.
+
+## Instructor Notes
+**Why this matters.** The three-bug gauntlet — `ImagePullBackOff`, wrong port,
+missing env var — covers roughly 80% of production Kubernetes incidents.
+Students who reach for YAML edits before reading `kubectl describe` will waste
+hours on-call. Muscle memory: observe first, fix second.
+
+**Common wrong approach.** Setting `imagePullPolicy: Never` to skip the pull.
+It masks the real skill. The tag must be correct.
+
+**Port mismatch subtlety.** Container port is informational in Kubernetes —
+the bug shows up in readiness probe failures and Service endpoints, not as a
+pod-level error. Students must connect `kubectl describe` events to the probe.
+
+**Next class link.** A missing env var crashing the app is the controlled
+version of the credentials-in-YAML problem covered in class 17.
