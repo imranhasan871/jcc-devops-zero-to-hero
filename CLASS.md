@@ -1,49 +1,57 @@
-# Class 09 — Docker Compose: Multi-Container App
+# Class 10 — Docker Compose with PostgreSQL + Health Checks
 
 ## Objective
-Learn how Docker Compose lets you define and run multi-container applications
-with a single configuration file, replacing long `docker run` commands with a
-declarative YAML specification.
+Replace the in-memory data store with a real PostgreSQL database running as a
+second Docker Compose service. Understand how containers communicate, how health
+checks prevent race conditions, and how to persist data across restarts.
 
 ## What You'll Learn
-- What Docker Compose is and why it exists
-- How to write a `docker-compose.yml` file
-- How to use `env_file` to inject environment variables
-- How Docker networking works between containers
-- Useful `docker compose` CLI commands
+- How to add a database service to `docker-compose.yml`
+- What Docker health checks are and why they matter
+- How `depends_on` with `condition: service_healthy` works
+- How named volumes persist data beyond container restarts
+- How to auto-initialize a database with a SQL script
+- How to use the `pg` Node.js client with a connection pool
 
 ## What Changed in This Class
-- Added `docker-compose.yml` with an `app` service that builds from our Dockerfile
-- Service exposes port 3000 and loads environment variables from `.env`
-- Added a named bridge network `jcc-net` for future container communication
-- Updated `Makefile` with `docker-up`, `docker-down`, and `docker-logs` targets
+- Updated `docker-compose.yml` with a `db` service using `postgres:16-alpine`
+- Added healthcheck on `db` using `pg_isready`
+- `app` now waits for `db` to be healthy before starting (`depends_on` condition)
+- Added `database/init.sql` — runs automatically on first PostgreSQL container start
+- Updated `server.js` to use `pg.Pool` for all data operations
+- Added `pg` to `package.json` dependencies
 
 ## Hands-On Exercise
-1. Copy `.env.example` to `.env` and set `NODE_ENV=development`
-2. Run `make docker-up` to build and start the container in detached mode
-3. Visit `http://localhost:3000/health` — you should see the health response
-4. Run `make docker-logs` to tail the application logs
-5. Run `make docker-down` to stop and remove the containers
+1. Run `make docker-down` to remove any existing containers
+2. Copy `.env.example` to `.env`, set `POSTGRES_PASSWORD=mysecret`
+3. Run `make docker-up` — watch the logs: `app` waits until `db` passes health checks
+4. Visit `http://localhost:3000/health` — confirm `"db": "connected"`
+5. Visit `http://localhost:3000/api/programs` — see seeded data from `init.sql`
+6. POST to `/api/applicants` with `{"name":"Alice","email":"alice@test.com","program_id":1}`
+7. Run `make docker-down && make docker-up` — confirm Alice is still there (volume persistence)
 
 ## Key Concepts
 
-**Docker Compose vs `docker run`**
-`docker run` is an imperative command — you type flags each time. Docker Compose
-is declarative: you describe the desired state in YAML and Compose makes it so.
-This means your entire local dev stack lives in version control alongside the code.
+**Health Checks vs `depends_on` (simple)**
+Without a health check condition, `depends_on` only waits for the container
+process to *start* — not for PostgreSQL to be *ready to accept connections*.
+The `pg_isready` command verifies the database is actually accepting queries.
+Without this, your app often crashes on startup because it connects before
+Postgres finishes initializing.
 
-**Networks in Docker Compose**
-By default Compose creates a network for your project. We define `jcc-net`
-explicitly so we can later add more services (like a database) that need to
-communicate. Containers on the same network can reach each other by service name
-(e.g., `app` can connect to `db` on hostname `db`).
+**Named Volumes**
+`db_data:/var/lib/postgresql/data` maps a Docker-managed volume to the
+directory where Postgres stores its files. Unlike bind mounts, named volumes
+survive `docker compose down` (but are removed by `docker compose down -v`).
+This is the correct way to persist database data in local development.
 
-**`env_file` vs `environment`**
-Using `env_file: .env` keeps secrets out of `docker-compose.yml`. The `.env`
-file is gitignored while `.env.example` is committed. The `environment:` key
-in Compose is for non-secret defaults that can be safely committed.
+**Connection Pools**
+`pg.Pool` maintains a pool of reusable TCP connections to PostgreSQL. Creating
+a new connection is expensive (TLS handshake, auth). A pool of 10 connections
+can serve hundreds of concurrent requests without the overhead of reconnecting
+for each query.
 
 ## Next Class Preview
-In Class 10 we add a real PostgreSQL database as a second service. We'll learn
-about health checks, service dependencies, named volumes for data persistence,
-and how to initialize the database schema automatically on first run.
+In Class 11 we introduce GitHub Actions. We'll create our first CI workflow
+that automatically runs linting and tests on every push and pull request —
+so broken code can never silently land in the repository.

@@ -9,9 +9,39 @@ services:
       - "3000:3000"
     env_file:
       - .env
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=${POSTGRES_DB:-jcc}
+      - DB_USER=${POSTGRES_USER:-jcc_user}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-secret}
+    depends_on:
+      db:
+        condition: service_healthy
     networks:
       - jcc-net
     restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-jcc}
+      POSTGRES_USER: ${POSTGRES_USER:-jcc_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secret}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jcc_user} -d ${POSTGRES_DB:-jcc}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - jcc-net
+    restart: unless-stopped
+
+volumes:
+  db_data:
 
 networks:
   jcc-net:
