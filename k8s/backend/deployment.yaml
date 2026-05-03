@@ -2,31 +2,29 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: backend
-  namespace: jcc
+  namespace: jcc-production
   labels:
-    app: jcc
+    app: jcc-backend
     tier: backend
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: jcc
+      app: jcc-backend
       tier: backend
-  # Rolling update strategy: brings up new pods before taking down old ones.
-  # maxUnavailable: 0 means we NEVER reduce below desired replica count during rollout.
-  # maxSurge: 1 means we can have at most desired+1 pods running simultaneously.
-  # Together: add 1 new pod → wait for it to be Ready → remove 1 old pod → repeat.
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxUnavailable: 0   # zero-downtime: never kill old pods before new ones are ready
-      maxSurge: 1         # only one extra pod at a time (controls rollout speed)
+      maxUnavailable: 0
+      maxSurge: 1
   template:
     metadata:
       labels:
-        app: jcc
+        app: jcc-backend
         tier: backend
     spec:
+      serviceAccountName: jcc-backend
+      automountServiceAccountToken: true
       containers:
         - name: backend
           image: jcc-backend:latest

@@ -1,0 +1,16 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: jcc-backend-role
+  namespace: jcc-production
+  labels:
+    app: jcc-backend
+rules:
+  # The backend only needs to read pod info (health checks) and configmaps (config reload).
+  # It does NOT need to create, delete, or modify any resources — those verbs are absent.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]

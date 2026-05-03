@@ -102,3 +102,15 @@ helm-diff: ## Show what will change — requires helm-diff plugin
 
 helm-uninstall: ## Remove the release (keeps namespace and PVCs)
 	helm uninstall jcc --namespace jcc-production
+
+## ── RBAC ─────────────────────────────────────────────────────────
+rbac-apply: ## Apply all RBAC resources
+	kubectl apply -f k8s/rbac/
+
+rbac-verify: ## Verify ServiceAccount permissions with kubectl auth can-i
+	@echo "=== jcc-backend SA: should be allowed ==="
+	kubectl auth can-i get pods --as=system:serviceaccount:jcc-production:jcc-backend -n jcc-production
+	kubectl auth can-i get configmaps --as=system:serviceaccount:jcc-production:jcc-backend -n jcc-production
+	@echo "=== jcc-backend SA: should be denied ==="
+	kubectl auth can-i delete pods --as=system:serviceaccount:jcc-production:jcc-backend -n jcc-production || true
+	kubectl auth can-i create deployments --as=system:serviceaccount:jcc-production:jcc-backend -n jcc-production || true
