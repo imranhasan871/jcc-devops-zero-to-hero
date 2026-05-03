@@ -1,0 +1,56 @@
+# Falco custom rules for JCC backend runtime security monitoring.
+# Install Falco: helm install falco falcosecurity/falco --set falco.grpc.enabled=true
+
+- rule: Shell Spawned in JCC Backend Container
+  desc: >
+    A shell binary was executed inside the jcc-backend container.
+    Legitimate Node.js applications do not spawn /bin/sh or /bin/bash.
+    This almost certainly indicates an attacker with code execution.
+  condition: >
+    spawned_process
+    and container
+    and container.image.repository contains "jcc"
+    and (proc.name = "sh" or proc.name = "bash" or proc.name = "dash"
+         or proc.name = "zsh" or proc.name = "ash")
+  output: >
+    ALERT: Shell spawned in JCC backend container
+    (user=%user.name command=%proc.cmdline container=%container.name
+     image=%container.image.repository pod=%k8s.pod.name namespace=%k8s.ns.name)
+  priority: CRITICAL
+  tags: [jcc, shell, mitre_execution]
+
+- rule: Sensitive File Read in JCC Backend
+  desc: >
+    The /etc/passwd or /etc/shadow file was read inside the jcc-backend container.
+    A Node.js backend has no legitimate reason to read system user databases.
+  condition: >
+    open_read
+    and container
+    and container.image.repository contains "jcc"
+    and (fd.name = "/etc/passwd" or fd.name = "/etc/shadow"
+         or fd.name = "/etc/sudoers")
+  output: >
+    ALERT: Sensitive file read in JCC backend
+    (file=%fd.name user=%user.name proc=%proc.name container=%container.name
+     pod=%k8s.pod.name namespace=%k8s.ns.name)
+  priority: WARNING
+  tags: [jcc, file-access, mitre_discovery]
+
+- rule: Write Attempt Outside /tmp in JCC Backend
+  desc: >
+    An attempt to write outside /tmp in the jcc-backend container.
+    The root filesystem is read-only — write attempts indicate an attacker
+    trying to persist a backdoor.
+  condition: >
+    open_write
+    and container
+    and container.image.repository contains "jcc"
+    and not fd.name startswith "/tmp"
+    and not fd.name startswith "/proc"
+    and not fd.name startswith "/dev"
+  output: >
+    ALERT: Write to read-only filesystem in JCC backend
+    (file=%fd.name proc=%proc.name user=%user.name container=%container.name
+     pod=%k8s.pod.name)
+  priority: ERROR
+  tags: [jcc, filesystem, mitre_persistence]

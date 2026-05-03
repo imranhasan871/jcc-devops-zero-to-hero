@@ -2,15 +2,15 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: backend
-  namespace: jcc-production
+  namespace: jcc
   labels:
-    app: jcc-backend
+    app: jcc
     tier: backend
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: jcc-backend
+      app: jcc
       tier: backend
   strategy:
     type: RollingUpdate
@@ -20,17 +20,32 @@ spec:
   template:
     metadata:
       labels:
-        app: jcc-backend
+        app: jcc
         tier: backend
     spec:
-      serviceAccountName: jcc-backend
-      automountServiceAccountToken: true
-      priorityClassName: jcc-critical
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: backend
           image: jcc-backend:latest
           ports:
             - containerPort: 3001
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp-dir
+              mountPath: /tmp
           env:
             - name: PORT
               value: "3001"
@@ -65,7 +80,6 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 5
             failureThreshold: 3
-            successThreshold: 1
           livenessProbe:
             httpGet:
               path: /health
@@ -86,3 +100,6 @@ spec:
             limits:
               cpu: "500m"
               memory: "256Mi"
+      volumes:
+        - name: tmp-dir
+          emptyDir: {}

@@ -1,0 +1,13 @@
+# Kubernetes Pod Security Standards — enforce "restricted" profile on production.
+# https://kubernetes.io/docs/concepts/security/pod-security-standards/
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jcc-production
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
