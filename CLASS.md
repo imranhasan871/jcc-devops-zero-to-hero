@@ -1,52 +1,47 @@
-# Class 22 — Jenkins: Setup + First Jenkinsfile
+# Class 23 — Jenkins: Full CI Pipeline (Test + Docker Build + Push)
 
 ## Objective
-Install Jenkins locally using Docker and create a Declarative Pipeline that
-runs lint and tests on every commit — the same workflow as our GitHub Actions
-CI but running on self-hosted infrastructure.
+Extend the Jenkins pipeline to build Docker images for all three services,
+run a security scan stub, and push images to a registry — but only when
+building the main branch.
 
 ## What You'll Learn
-- How Jenkins differs from GitHub Actions and when to choose each
-- What a Declarative Pipeline is and how its stages/steps/post blocks work
-- How to connect Jenkins to a Git repository
-- How to run Jenkins with Docker access for later Docker build stages
+- How to use Jenkins environment variables and BUILD_NUMBER for image tags
+- How to run parallel stages to speed up Docker builds
+- How the Jenkins Credentials Binding plugin keeps secrets out of logs
+- Why you should only push images from protected branches
 
 ## What Changed in This Class
-- Replaced `Jenkinsfile` with a clean Declarative Pipeline: Checkout → Install → Lint → Test
-- Added `jenkins/README.md` with step-by-step local Jenkins setup instructions
+- Updated `Jenkinsfile` with `environment` block (REGISTRY, IMAGE_TAG), parallel Docker build stages, security scan stub, and conditional push stage
 
 ## Hands-On Exercise
-1. Start Jenkins: follow `jenkins/README.md` to run the Docker command
-2. Complete first-time setup and install the recommended plugins
-3. Install the Docker Pipeline plugin from the plugin manager
-4. Create a new Pipeline job pointing to this repository
-5. Trigger your first build and explore the Stage View
-6. Break a lint rule intentionally — watch the Lint stage go red
-7. Fix it and rebuild — watch all stages go green
+1. Create a registry credential in Jenkins: Manage Jenkins → Credentials → (global) → Add Credentials (Username with password, ID: registry-credentials)
+2. Trigger a build on a feature branch — the Push stage should be skipped
+3. Merge to main and trigger again — the Push stage should run
+4. View the "Stage View" in Jenkins to see the parallel build timings
+5. Intentionally fail one parallel stage — observe which other stages are affected
+6. Add a real Trivy scan by uncommenting the stub and running it against the backend image
 
 ## Key Concepts
 
-**Jenkins vs GitHub Actions** — GitHub Actions is a cloud service: you push
-code, GitHub spins up a fresh virtual machine, runs your workflow, and tears it
-down. It is fast to set up and has zero infrastructure to manage, but you are
-limited by GitHub's runner capacity and you pay per minute beyond the free tier.
-Jenkins is self-hosted: you manage the server, the agents, the plugins, and the
-disk space. This gives you full control — custom hardware, air-gapped
-environments, no minute limits — but also full responsibility.
+**Jenkins Credentials Store** — Never hardcode secrets in a Jenkinsfile. The
+Credentials Binding plugin injects secrets as environment variables for the
+duration of a `withCredentials {}` block, then scrubs them from memory. Jenkins
+also masks the secret values in the console log, replacing them with `****`.
+Store registry credentials, kubeconfig files, SSH keys, and API tokens here.
 
-**Declarative Pipeline** — Jenkins supports two pipeline syntaxes. Scripted
-Pipelines use Groovy directly. Declarative Pipelines use a structured DSL with
-`pipeline {}`, `stages {}`, `stage {}`, `steps {}`, and `post {}` blocks. The
-Declarative syntax is easier to read, validates earlier, and is the recommended
-approach for new pipelines. The `post` block runs cleanup or notifications
-regardless of whether the build passed or failed.
+**Parallel Stages** — Wrapping multiple `stage {}` blocks inside a `parallel {}`
+block runs them simultaneously on the same agent. Building three Docker images
+in parallel rather than in sequence reduces total build time roughly 3x. If any
+parallel stage fails, Jenkins marks the parallel block as failed but lets other
+parallel stages finish unless you set `failFast: true`.
 
-**`npm ci` vs `npm install`** — In CI environments always use `npm ci`. It
-reads `package-lock.json` exactly, fails if the lock file is missing or
-inconsistent with `package.json`, and never updates the lock file. This
-guarantees reproducible builds across every agent and every branch.
+**Conditional Execution with `when`** — The `when { branch 'main' }` directive
+means the stage only runs when Jenkins is building the `main` branch. This
+prevents feature branches from pushing untested images to production registries.
+You can combine conditions: `when { branch 'main'; not { changeRequest() } }`.
 
 ## Next Class Preview
-Class 23 extends the Jenkinsfile to build Docker images, push them to a
-registry with credentials, and run a security scan stub — making Jenkins a
-full CI system comparable to the GitHub Actions workflow we built in class 15.
+Class 24 closes the loop by adding Kubernetes deployment stages to Jenkins —
+deploy to a dev namespace automatically and to production only after a manual
+approval gate, completing a full GitOps-style CD pipeline.

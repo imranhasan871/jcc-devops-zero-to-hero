@@ -2,26 +2,27 @@ pipeline {
     agent any
 
     options {
-        // Keep only last 10 builds to save disk space
         buildDiscarder(logRotator(numToKeepStr: '10'))
-        // Fail the build if it runs longer than 30 minutes
-        timeout(time: 30, unit: 'MINUTES')
-        // Don't run concurrent builds on the same branch
+        timeout(time: 60, unit: 'MINUTES')
         disableConcurrentBuilds()
+    }
+
+    environment {
+        REGISTRY  = 'your-registry.io/jcc'      // change to your registry
+        IMAGE_TAG = "${env.BUILD_NUMBER}"         // unique tag per build
     }
 
     stages {
         stage('Checkout') {
             steps {
                 checkout scm
-                echo "Building branch: ${env.BRANCH_NAME}, commit: ${env.GIT_COMMIT?.take(8)}"
+                echo "Building ${env.BRANCH_NAME} @ ${env.GIT_COMMIT?.take(8)} as image tag ${IMAGE_TAG}"
             }
         }
 
         stage('Install') {
             steps {
                 dir('backend') {
-                    // npm ci is faster and stricter than npm install — uses package-lock.json exactly
                     sh 'npm ci'
                 }
             }
@@ -41,11 +42,60 @@ pipeline {
                     sh 'npm test'
                 }
             }
-            post {
-                always {
-                    // Publish test results if JUnit XML is generated
-                    // Requires the JUnit plugin in Jenkins
-                    echo 'Test stage complete — check console output for results'
+        }
+
+        // Build all three images in parallel to save time
+        stage('Build Docker Images') {
+            parallel {
+                stage('Backend Image') {
+                    steps {
+                        sh "docker build -t ${REGISTRY}/backend:${IMAGE_TAG} ./backend"
+                        sh "docker tag ${REGISTRY}/backend:${IMAGE_TAG} ${REGISTRY}/backend:latest"
+                    }
+                }
+                stage('Frontend Image') {
+                    steps {
+                        sh "docker build -t ${REGISTRY}/frontend:${IMAGE_TAG} ./frontend"
+                        sh "docker tag ${REGISTRY}/frontend:${IMAGE_TAG} ${REGISTRY}/frontend:latest"
+                    }
+                }
+                stage('Database Image') {
+                    steps {
+                        sh "docker build -t ${REGISTRY}/database:${IMAGE_TAG} ./database"
+                        sh "docker tag ${REGISTRY}/database:${IMAGE_TAG} ${REGISTRY}/database:latest"
+                    }
+                }
+            }
+        }
+
+        stage('Security Scan') {
+            steps {
+                // TODO: replace this stub with a real Trivy scan:
+                //   sh "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL ${REGISTRY}/backend:${IMAGE_TAG}"
+                echo "TODO: add trivy scan here"
+                echo "Stub: skipping security scan for now"
+            }
+        }
+
+        stage('Push Images') {
+            when {
+                branch 'main'   // only push from the main branch
+            }
+            steps {
+                // Jenkins Credentials Binding plugin — never puts secrets in logs
+                withCredentials([usernamePassword(
+                    credentialsId: 'registry-credentials',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh 'echo $DOCKER_PASS | docker login your-registry.io -u $DOCKER_USER --password-stdin'
+                    sh "docker push ${REGISTRY}/backend:${IMAGE_TAG}"
+                    sh "docker push ${REGISTRY}/backend:latest"
+                    sh "docker push ${REGISTRY}/frontend:${IMAGE_TAG}"
+                    sh "docker push ${REGISTRY}/frontend:latest"
+                    sh "docker push ${REGISTRY}/database:${IMAGE_TAG}"
+                    sh "docker push ${REGISTRY}/database:latest"
+                    sh 'docker logout your-registry.io'
                 }
             }
         }
@@ -53,13 +103,14 @@ pipeline {
 
     post {
         success {
-            echo "Build #${env.BUILD_NUMBER} passed on branch ${env.BRANCH_NAME}"
+            echo "Build #${IMAGE_TAG} complete — images pushed to ${REGISTRY}"
         }
         failure {
-            echo "Build #${env.BUILD_NUMBER} FAILED on branch ${env.BRANCH_NAME} — check logs above"
+            echo "Build #${IMAGE_TAG} FAILED — images NOT pushed"
         }
         always {
-            // Clean up workspace to save disk space on the Jenkins agent
+            // Remove local images to free disk on the Jenkins agent
+            sh "docker rmi ${REGISTRY}/backend:${IMAGE_TAG} ${REGISTRY}/frontend:${IMAGE_TAG} ${REGISTRY}/database:${IMAGE_TAG} || true"
             cleanWs()
         }
     }
