@@ -156,3 +156,16 @@ tf-apply: ## Apply the Terraform plan (prompts for confirmation)
 
 tf-destroy: ## Destroy all Terraform-managed resources
 	terraform -chdir=terraform destroy
+
+## ── EKS ──────────────────────────────────────────────────────────
+eks-kubeconfig: ## Configure kubectl for the Terraform-provisioned EKS cluster
+	aws eks update-kubeconfig \
+	  --region $$(terraform -chdir=terraform output -raw region 2>/dev/null || echo us-east-1) \
+	  --name $$(terraform -chdir=terraform output -raw cluster_name)
+
+eks-nodes: ## List EKS worker nodes and their status
+	kubectl get nodes -o wide
+
+eks-cluster-info: ## Show cluster endpoint and version
+	kubectl cluster-info
+	kubectl version --short
