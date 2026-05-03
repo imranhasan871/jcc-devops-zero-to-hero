@@ -1,55 +1,86 @@
-# Class 11 — GitHub Actions: First CI Workflow
+# Class 11 — CI Doesn't Lie
 
-## Objective
-Set up Continuous Integration (CI) so that every push to the repository
-automatically runs the linter and test suite. Broken code is caught before it
-ever reaches a teammate's machine.
+## The Scenario
+Three developers merged code to `main` this week. Friday at 5:45 pm, a client
+calls: the `/api/applicants` POST endpoint returns `500` on production. You dig
+into the logs and find a JavaScript syntax error committed at 3:04 pm by a
+developer who "quickly fixed something." Nobody caught it because there are no
+automated checks. The entire team's Friday evening is gone. The client's
+applications are blocked. This never happens again starting today.
 
-## What You'll Learn
-- What Continuous Integration is and why it matters
-- How GitHub Actions workflows are structured
-- What triggers (`on:`) control when a workflow runs
-- How jobs, steps, and actions compose a pipeline
+## The Problem
+There is no GitHub Actions workflow in this repository. Nothing validates code
+before it reaches `main`. A single typo in `server.js` can take production down
+for hours and nobody finds out until a client calls.
+
+## Your Mission
+1. Create a GitHub Actions workflow that runs on every push to every branch and
+   on every pull request targeting `main`.
+2. The workflow must: install dependencies, run the linter, run the full test
+   suite. If any step fails the entire workflow fails.
+3. Cache `node_modules` between runs using `actions/cache` — the workflow must
+   finish in under 3 minutes total.
+4. Demonstrate the workflow catching a real fault: introduce a deliberate syntax
+   error in `server.js`, push it, confirm the Actions tab shows a red ✗, then
+   fix it and confirm a green ✓.
+5. Document (in a `notes.md` or inline comments) exactly what GitHub branch
+   protection settings must be enabled so that a failing CI blocks the merge
+   button — not just shows a warning.
+
+## What You Need to Know First
+- GitHub Actions workflow syntax: `on`, `jobs`, `steps`, `uses`, `run`
 - The difference between `npm install` and `npm ci`
+- `actions/checkout`, `actions/setup-node`, `actions/cache` — what each does
+- How GitHub branch protection rules connect to required status checks
+- What a workflow `needs:` dependency does between jobs
 
-## What Changed in This Class
-- Added `.github/workflows/ci.yml` with a `lint-and-test` job
-- Workflow triggers on every push to any branch and on PRs targeting `main`
-- Job runs on `ubuntu-latest` with Node.js 20
-- Steps: checkout → install → lint → test
+## Constraints
+- Only three external actions are allowed: `actions/checkout`,
+  `actions/setup-node`, `actions/cache`. No marketplace shortcuts.
+- The cache key must incorporate `package-lock.json` so it invalidates when
+  dependencies change.
+- The workflow file must live at `.github/workflows/ci.yml`.
+- Branch protection documentation must name the exact repository setting path:
+  Settings → Branches → Branch protection rules → "Require status checks to
+  pass before merging."
 
-## Hands-On Exercise
-1. Push this branch to GitHub: `git push -u origin class-11`
-2. Navigate to your repo on GitHub → **Actions** tab
-3. Watch the `CI` workflow run in real time
-4. Intentionally break a lint rule in `server.js`, push again, and see it fail
-5. Fix the lint error, push once more — confirm the workflow goes green
-6. Open a pull request from `class-11` into `main` and observe CI runs on the PR
+## Verification
+```bash
+# 1. Introduce a syntax error
+echo "const x = {" >> server.js
+git add server.js && git commit -m "deliberate syntax error"
+git push origin class-11
 
-## Key Concepts
+# 2. Check Actions tab — must show red ✗ for the push above.
 
-**What is Continuous Integration?**
-CI is the practice of merging code changes into a shared branch frequently and
-verifying each merge automatically. The goal is to detect integration problems
-early, when they are cheap to fix. Without CI, bugs accumulate silently until
-a manual deploy — at which point untangling multiple changes is painful.
+# 3. Revert the error
+git revert HEAD --no-edit
+git push origin class-11
 
-**Workflow File Anatomy**
-A GitHub Actions workflow is a YAML file inside `.github/workflows/`. The top-
-level keys are:
-- `name` — displayed in the GitHub UI
-- `on` — the events that trigger the workflow (push, pull_request, schedule, etc.)
-- `jobs` — one or more independent (or dependent) units of work, each running
-  on a fresh virtual machine
-- `steps` — sequential commands or reusable actions within a job
+# 4. Check Actions tab — must show green ✓ for the revert push.
 
-**`npm ci` vs `npm install`**
-`npm ci` (short for "clean install") deletes `node_modules` and installs
-*exactly* what is in `package-lock.json`. It fails if the lockfile is out of
-sync. This makes CI builds reproducible — you are always testing against the
-same dependency versions that were committed, not a potentially different
-resolution.
+# 5. Locally confirm the cache is being used on the second run:
+#    In the Actions log, the "Restore cache" step must say "Cache restored".
+```
+Both run URLs (one red, one green) must be recorded in your notes.
 
-## Next Class Preview
-In Class 12 we write real automated tests using Jest and Supertest, and update
-the workflow to collect and upload a code-coverage report as a CI artifact.
+## Stretch Challenge
+Add a step that posts a comment on pull requests with the Jest test coverage
+percentage. The comment must only fire on PR events — never on direct pushes.
+If you push a second commit to the same PR the step must update the existing
+comment rather than posting a new one.
+
+## Instructor Notes
+Branch protection rules are the enforcement mechanism. CI without branch
+protection is a polite suggestion — any developer can ignore it and merge.
+Requiring the status check in branch protection is what makes CI mandatory.
+
+The cache step is not cosmetic. Without it, `npm ci` takes 40–50 seconds on
+every run. With caching, subsequent runs restore in under 5 seconds. Over 50
+pushes per week that is 30+ minutes of unnecessary waiting for the team.
+
+Wrong approach to avoid: using `npm install` instead of `npm ci`. `npm ci`
+installs from the lockfile exactly, making the CI environment deterministic.
+`npm install` can silently upgrade patch versions and introduce inconsistency
+between local and CI environments — exactly the kind of subtle bug that
+causes "it works on my machine" failures.
