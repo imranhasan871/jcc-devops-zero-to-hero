@@ -1,55 +1,71 @@
-# Class 24 — Jenkins + Kubernetes: Full CD Pipeline with Environment Promotion
+# Class 25 — Monitoring: Prometheus + Grafana (Hero Final Class)
 
 ## Objective
-Complete the Jenkins CD pipeline by adding Kubernetes deployment stages for
-both dev and production environments, with a manual approval gate before any
-production release.
+Add observability to the JCC platform so you can see what's happening in production in real time.
+This is the final class — you have gone from a plain HTML file to a fully monitored, containerised,
+CI/CD-deployed, Kubernetes-orchestrated application. That is the complete DevOps journey.
 
 ## What You'll Learn
-- How to structure a multi-environment deployment pipeline
-- How to use Jenkins `input` step for manual approval gates
-- How to use Kubernetes namespaces to isolate environments
-- Why human approval before production is a best practice, not a bottleneck
+- What the 4 Golden Signals of monitoring are
+- How Prometheus scrapes metrics from your app
+- How Grafana reads Prometheus data and builds dashboards
+- How to expose a `/metrics` endpoint from a Node.js app (no extra library)
+- How to run the entire monitoring stack with one `make` command
 
 ## What Changed in This Class
-- Updated `Jenkinsfile` — added KUBECONFIG credential, "Deploy to Dev", "Approve Production Deploy" (input gate), and "Deploy to Production" stages
-- Added `k8s/namespaces/dev.yaml` — jcc-dev namespace with ResourceQuota
-- Added `k8s/namespaces/production.yaml` — jcc-production namespace with stricter ResourceQuota and LimitRange
+- `server.js` — added `metricsMiddleware` (counts all requests) and `/metrics` endpoint (Prometheus text format)
+- `monitoring/prometheus.yml` — scrape config targeting the JCC app's `/metrics` endpoint
+- `monitoring/docker-compose.monitoring.yml` — Prometheus + Grafana as Docker Compose services
+- `monitoring/grafana-datasource.yml` — auto-provisions Prometheus as Grafana datasource
+- `monitoring/grafana-dashboard.json` — pre-built dashboard with request count, uptime, heap memory panels
+- `Makefile` — added `monitoring-up`, `monitoring-down`, `metrics-check` targets
+
+## The 4 Golden Signals
+Every production system should be monitored against these four signals:
+
+| Signal | What it measures | JCC metric |
+|--------|-----------------|------------|
+| **Latency** | How long requests take | Response time (add with histogram) |
+| **Traffic** | How many requests per second | `jcc_requests_total` counter |
+| **Errors** | Rate of failed requests | Add HTTP 5xx label to counter |
+| **Saturation** | How full your resources are | `jcc_heap_bytes`, CPU via node-exporter |
 
 ## Hands-On Exercise
-1. Create the namespaces: `kubectl apply -f k8s/namespaces/`
-2. Add your kubeconfig to Jenkins credentials as a Secret File with ID `kubeconfig`
-3. Trigger a build on main — watch it deploy to dev automatically
-4. Check the dev deployment: `kubectl get pods -n jcc-dev`
-5. In Jenkins, find the "Approve Production Deploy" step and click Proceed
-6. Watch the production deployment complete
-7. Verify: `kubectl get pods -n jcc-production`
-8. Test rollback: trigger another build with a bad image tag, let it fail in dev, and observe that production is untouched
+1. Start the full stack: `make docker-up`
+2. Start monitoring: `make monitoring-up`
+3. Send some traffic: `curl http://localhost:3000/api/programs` (repeat 5-10 times)
+4. Check raw metrics: `make metrics-check` — you'll see Prometheus text format
+5. Open Prometheus UI at `http://localhost:9090` → query `jcc_requests_total`
+6. Open Grafana at `http://localhost:3001` (admin / admin) → find the JCC dashboard
+7. Watch the "Total Requests" panel update as you send more traffic
 
 ## Key Concepts
 
-**Environment Promotion** — The industry standard pattern is: build once, deploy
-many times. The same Docker image built in CI is deployed to dev, then staging,
-then production. Each promotion is a gate: automated tests must pass in dev
-before staging, and a human must approve before production. You never build a
-new image for each environment — that would introduce drift and defeat the
-purpose of testing.
+**Prometheus Scraping** — Prometheus works by PULLING metrics from your app at a regular interval
+(every 15s by default). Your app exposes `/metrics` in plain text format; Prometheus reads it
+and stores the data as time-series. This is the opposite of traditional logging (push model).
 
-**Manual Approval Gates** — The Jenkins `input` step pauses the pipeline and
-sends a notification. A named list of users (the `submitter` field) can approve
-or reject. This creates an audit trail: who approved, when, and for which build
-number. This is not bureaucracy — it is accountability. One bad Saturday-night
-deploy with no approval gate is enough to appreciate why this exists.
+**Grafana Datasource** — Grafana does not store data itself. It connects to data sources
+(Prometheus, Loki, InfluxDB) and visualises them. One Grafana instance can show metrics from
+many different systems on a single dashboard.
 
-**Kubernetes Namespaces as Environment Isolation** — Namespaces are lightweight
-Kubernetes partitions. Resources in `jcc-dev` are completely isolated from
-`jcc-production` — different ConfigMaps, different Secrets, different resource
-quotas. A developer can break the dev namespace completely without affecting
-production. ResourceQuotas prevent a runaway dev workload from consuming
-cluster resources needed by production.
+**Counter vs Gauge** — A Counter only goes up (total requests). A Gauge can go up or down
+(heap memory, active connections). Prometheus `rate()` function turns counter deltas into
+per-second rates, which is how you get "requests per second" from a counter.
 
-## Next Class Preview
-Class 25 — the final class — adds full observability with Prometheus and Grafana.
-We will instrument the backend to expose metrics, set up a monitoring stack
-with Docker Compose, and build a Grafana dashboard. You will have built a
-complete DevOps pipeline from git commit to production monitoring.
+## You Made It
+
+```
+class-01  Plain HTML, no server              <- where you started
+class-05  Node.js + npm scripts + Makefile
+class-08  Docker (multi-stage, non-root user)
+class-10  Docker Compose + PostgreSQL
+class-14  CI/CD with GitHub Actions
+class-17  Kubernetes (Deployments, Services, Secrets)
+class-21  Rolling updates + autoscaling (HPA)
+class-24  Jenkins full CD pipeline to production
+class-25  Prometheus + Grafana monitoring    <- where you are now
+```
+
+Every company running software at scale uses tools from this exact stack.
+You now understand how they fit together end-to-end.

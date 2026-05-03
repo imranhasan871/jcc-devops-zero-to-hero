@@ -68,3 +68,13 @@ k8s-scale:
 
 k8s-hpa-status:
 	kubectl get hpa -n jcc
+
+## ── Monitoring ───────────────────────────────────────────────────
+monitoring-up: ## Start Prometheus + Grafana stack
+	docker compose -f monitoring/docker-compose.monitoring.yml up -d
+
+monitoring-down: ## Stop monitoring stack
+	docker compose -f monitoring/docker-compose.monitoring.yml down
+
+metrics-check: ## Hit the /metrics endpoint locally
+	curl -s http://localhost:3000/metrics

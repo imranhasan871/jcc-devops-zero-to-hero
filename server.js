@@ -5,9 +5,41 @@ const path = require('path');
 const { Pool } = require('pg');
 const config = require('./config');
 
+// --- Prometheus metrics (simple text format, no extra library needed) ---
+let requestCount = 0;
+const requestsByRoute = {};
+function metricsMiddleware(req, res, next) {
+  res.on('finish', () => {
+    requestCount++;
+    const key = `${req.method}_${req.route ? req.route.path : req.path}`;
+    requestsByRoute[key] = (requestsByRoute[key] || 0) + 1;
+  });
+  next();
+}
+
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+app.use(metricsMiddleware);
+
+// Prometheus text-format metrics endpoint
+app.get('/metrics', (req, res) => {
+  const uptime = process.uptime();
+  const heap = process.memoryUsage().heapUsed;
+  let body = `# HELP jcc_requests_total Total HTTP requests received\n`;
+  body += `# TYPE jcc_requests_total counter\n`;
+  body += `jcc_requests_total ${requestCount}\n\n`;
+  body += `# HELP jcc_uptime_seconds Server uptime in seconds\n`;
+  body += `# TYPE jcc_uptime_seconds gauge\n`;
+  body += `jcc_uptime_seconds ${uptime.toFixed(2)}\n\n`;
+  body += `# HELP jcc_heap_bytes Node.js heap memory used\n`;
+  body += `# TYPE jcc_heap_bytes gauge\n`;
+  body += `jcc_heap_bytes ${heap}\n\n`;
+  Object.entries(requestsByRoute).forEach(([route, count]) => {
+    body += `jcc_requests_by_route{route="${route}"} ${count}\n`;
+  });
+  res.set('Content-Type', 'text/plain; version=0.0.4').send(body);
+});
 
 // PostgreSQL connection pool
 const pool = new Pool({

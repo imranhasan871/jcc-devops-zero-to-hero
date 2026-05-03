@@ -1,0 +1,41 @@
+# Prometheus configuration for the JCC platform
+# Prometheus scrapes (pulls) metrics from targets on a schedule.
+# The /metrics endpoint must return text in the Prometheus exposition format.
+
+global:
+  scrape_interval: 15s       # scrape every 15 seconds
+  evaluation_interval: 15s   # evaluate alerting rules every 15 seconds
+  scrape_timeout: 10s
+
+# Alertmanager configuration (optional — add when you want alert notifications)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ['alertmanager:9093']
+
+# Rule files for alerting (add .yml files here for alert rules)
+# rule_files:
+#   - "alerts/*.yml"
+
+scrape_configs:
+  # Prometheus scrapes itself so you can monitor the monitoring system
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # JCC backend application metrics
+  - job_name: 'jcc-backend'
+    scrape_interval: 10s      # scrape the app more frequently than the default
+    static_configs:
+      - targets: ['backend:3001']
+    metrics_path: '/metrics'  # our custom metrics endpoint
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'jcc-backend'
+
+  # Node Exporter — host-level metrics (CPU, memory, disk, network)
+  # Run with: docker run -p 9100:9100 prom/node-exporter
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
