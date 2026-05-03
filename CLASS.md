@@ -1,66 +1,61 @@
-# Class 06 — First Dockerfile
+# Class 07 — .dockerignore & Layer Caching
 
 ## Objective
-A Dockerfile is a recipe for building a container image — a portable, self-contained
-snapshot of your application and everything it needs to run. Once built, the image runs
-identically on your laptop, a teammate's Windows machine, a CI server, and a production
-cloud instance. This class introduces the five core Dockerfile instructions and produces
-a working image for the JCC platform.
+A working Dockerfile is not the same as an efficient one. In this class we make two
+targeted improvements: a `.dockerignore` file to exclude irrelevant files from the build
+context, and a reordering of Dockerfile instructions to exploit Docker's layer caching
+mechanism. The result is a build that goes from potentially 60+ seconds down to under
+2 seconds for the common case of "I only changed one line of JavaScript."
 
 ## What You'll Learn
-- What a Docker image is and how it relates to a container
-- The five essential Dockerfile instructions: `FROM`, `WORKDIR`, `COPY`, `RUN`, `CMD`
-- The difference between build time and runtime in Docker
-- How to build an image and run a container locally
-- Why Alpine Linux is a popular base image choice
+- What the Docker build context is and why its size matters
+- How `.dockerignore` works (and how it mirrors `.gitignore`)
+- How Docker's layer caching works: what invalidates a cache hit
+- Why instruction order in a Dockerfile is a performance and correctness concern
+- The canonical pattern for caching `npm install` in a Dockerfile
 
 ## What Changed in This Class
-- Added `Dockerfile` — single-stage build: FROM node:20-alpine, COPY all files,
-  RUN npm install (prod only), EXPOSE 3000, CMD node server.js
+- Added `.dockerignore` — excludes `node_modules/`, `.env`, `.git`, docs, editor noise
+- Updated `Dockerfile` — split `COPY . .` into two steps: copy `package*.json` first,
+  run `npm install`, then copy the rest of the source code
 
 ## Hands-On Exercise
-1. Build the image: `docker build -t jcc-platform:class-06 .`
-   Watch the output — each instruction is a separate step.
-2. List your local images: `docker images | grep jcc-platform`
-3. Run a container: `docker run -p 3000:3000 jcc-platform:class-06`
-4. Open `http://localhost:3000` in your browser. The app works exactly as before.
-5. In another terminal, check running containers: `docker ps`
-6. Stop the container: `docker stop <container-id>` (use the ID from `docker ps`).
-7. Run it with an overridden port: `docker run -p 4000:3000 -e PORT=3000 jcc-platform:class-06`
-   Access it on `http://localhost:4000`.
-8. Inspect the layers: `docker history jcc-platform:class-06`
-   Notice how each instruction produced a layer of different sizes.
+1. Build the image once: `docker build -t jcc-platform:class-07 .`
+   Note how long `npm install` takes.
+2. Edit `public/index.html` — change the page title slightly. Save.
+3. Build again: `docker build -t jcc-platform:class-07 .`
+   Observe the output: steps 1-3 (FROM, WORKDIR, COPY package*.json) show "CACHED".
+   The `npm install` step also shows "CACHED". Only the final `COPY . .` runs fresh.
+4. Now edit `package.json` — add a space somewhere. Save.
+5. Build again. This time `npm install` re-runs because `package*.json` changed.
+6. Without `.dockerignore`, check what happens: temporarily rename it, then
+   `docker build -t jcc-platform:no-ignore .` and watch the "Sending build context" line.
+   With `.dockerignore` the context is a few KB; without it, it includes all of
+   `node_modules/` (potentially 50+ MB sent to the Docker daemon every single build).
 
-## Dockerfile Instructions Explained
+## Key Concepts
 
-**FROM node:20-alpine**: Every Dockerfile must start with FROM. It names the base image
-to build upon. `node:20-alpine` gives us a Linux environment with Node.js 20 pre-installed,
-built on Alpine — a security-focused, minimal Linux distribution that results in images
-roughly 5× smaller than the default Debian-based node image. Always pin to a major version
-tag (not `latest`) so builds are reproducible.
+**Docker build context**: When you run `docker build .`, Docker sends all files in `.`
+(the build context) to the Docker daemon before executing any instruction. If `node_modules/`
+is not in `.dockerignore`, those hundreds of megabytes are uploaded on every single build —
+even though `RUN npm install` immediately creates its own copy inside the image. The
+`.dockerignore` file tells Docker which files to exclude from the context transfer,
+making the initial step nearly instant.
 
-**WORKDIR /app**: Sets the current directory for all following instructions. Think of it
-as `mkdir /app && cd /app`. Using a dedicated directory (conventionally `/app`) keeps
-your application files separate from system files in the image.
+**Layer caching and invalidation**: A Docker image is a stack of read-only layers. Each
+instruction that modifies the filesystem (`COPY`, `RUN`, `ADD`) creates one layer. When
+you rebuild, Docker compares each instruction against its cache. If the instruction text
+AND all its inputs are identical to a previous build, Docker reuses the cached layer and
+skips execution. The moment a layer is invalidated (its inputs changed), all layers below
+it are also invalidated — they cannot be reused because their starting point has changed.
+This is why the COPY/RUN order matters so much: `COPY . .` is invalidated on every source
+change, so any `RUN npm install` after it can never be cached.
 
-**COPY . .**: Copies everything from your local project directory (the "build context")
-into the container's working directory. The first `.` is "everything here on my machine",
-the second `.` is "into the current WORKDIR in the image".
-
-**RUN npm install --omit=dev**: Executes a shell command inside the image during the build.
-`--omit=dev` skips devDependencies so `nodemon`, `eslint`, and `jest` are not included —
-they are only needed during development, not at runtime. Every `RUN` creates a new
-immutable layer in the image.
-
-**EXPOSE 3000**: Declares that the container listens on port 3000. This is documentation
-for humans and orchestration tools — it does not open any ports by itself. You still pass
-`-p 3000:3000` to `docker run` to map the container port to your host.
-
-**CMD ["node", "server.js"]**: The default command that runs when the container starts.
-Using the JSON array form (exec form) avoids wrapping the process in `/bin/sh -c`, which
-means Docker's `SIGTERM` signal for graceful shutdown reaches Node.js directly instead
-of being swallowed by the shell.
+**package*.json glob**: Using `COPY package*.json ./` copies both `package.json` and
+`package-lock.json` (if present) in a single instruction. `package-lock.json` is critical
+because it pins the exact version of every transitive dependency — copying only
+`package.json` would allow minor version drift between builds.
 
 ## Next Class Preview
-We add `.dockerignore` to speed up builds and learn why the order of `COPY` and `RUN`
-instructions dramatically affects how often Docker can reuse its cached layers.
+We upgrade to a multi-stage Dockerfile that produces a smaller, more secure production
+image by separating the build environment from the runtime environment.
