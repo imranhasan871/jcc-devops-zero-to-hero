@@ -1,51 +1,52 @@
-# Class 19 — K8s Ingress + Full Routing
+# Class 20 — Health Checks: Liveness + Readiness Probes
 
 ## Objective
-Expose the entire JCC application through a single external entry point using
-a Kubernetes Ingress resource, routing traffic to the correct service based on
-the URL path.
+Configure Kubernetes health probes on the backend Deployment so the cluster
+can detect unhealthy pods, route traffic only to ready pods, and automatically
+restart broken containers without manual intervention.
 
 ## What You'll Learn
-- The difference between NodePort, LoadBalancer, and Ingress
-- How the NGINX Ingress Controller processes Ingress rules
-- Path-based routing with regex rewriting
-- How to set up local DNS for minikube development
+- The difference between liveness, readiness, and startup probes
+- How probe failures affect pod lifecycle and traffic routing
+- How to tune probe timing to avoid false positives
+- Why probes are essential for zero-downtime deployments
 
 ## What Changed in This Class
-- Updated `k8s/ingress/ingress.yaml` — routes `jcc.local/api/*` to the backend and `/` to the frontend
-- Added `k8s/ingress/ingress-controller.yaml` — instructions for installing the NGINX ingress controller
-- Updated `Makefile` with `k8s-ingress-enable`, `k8s-ingress-apply`, and `k8s-ingress-status` targets
+- Updated `k8s/backend/deployment.yaml` with explicit readiness, liveness, and startup probes with documented parameters
+- Added resource requests and limits to the backend container
 
 ## Hands-On Exercise
-1. Enable the ingress addon: `make k8s-ingress-enable`
-2. Get the minikube IP: `minikube ip`
-3. Add `<minikube-ip>  jcc.local` to `/etc/hosts`
-4. Apply the ingress rule: `make k8s-ingress-apply`
-5. Check the ingress: `make k8s-ingress-status`
-6. Open `http://jcc.local` in your browser — you should see the frontend
-7. Test the API: `curl http://jcc.local/api/applicants`
+1. Apply the updated deployment: `kubectl apply -f k8s/backend/deployment.yaml`
+2. Watch pods roll over: `kubectl rollout status deployment/backend -n jcc`
+3. Describe a pod to see probe config: `kubectl describe pod -l tier=backend -n jcc | grep -A 10 Liveness`
+4. Simulate a failing health check by temporarily changing `/health` to `/bad` in the deployment and applying it
+5. Watch Kubernetes restart the pod: `kubectl get pods -n jcc -w`
+6. Check restart count: `kubectl get pods -n jcc` — look at the RESTARTS column
+7. Fix the path and redeploy to restore health
 
 ## Key Concepts
 
-**NodePort vs LoadBalancer vs Ingress** — NodePort exposes a service on a static
-port on every node (e.g., `30080`). It works but gives every service its own
-port, which is unmanageable. LoadBalancer provisions a cloud load balancer per
-service — expensive when you have many services. Ingress is a single L7 (HTTP)
-load balancer that routes to many services based on hostname and path. One
-external IP, many services.
+**Readiness Probe** — Answers the question: "Is this pod ready to serve
+traffic?" When a readiness probe fails, Kubernetes removes the pod from the
+Service's Endpoints list. Requests stop being routed to it, but the pod keeps
+running. This is perfect for handling warm-up time, database reconnection, or
+temporary overload. Once the probe passes again, the pod is added back
+automatically.
 
-**NGINX Ingress Controller** — Kubernetes itself only defines the Ingress API.
-The actual routing is done by an Ingress Controller — a pod running NGINX that
-watches for Ingress resources and dynamically updates its configuration. When
-you apply `ingress.yaml`, the controller reads it and generates an NGINX config
-that proxies the right paths to the right ClusterIP services.
+**Liveness Probe** — Answers the question: "Is this pod still alive and
+functioning?" When a liveness probe fails `failureThreshold` times in a row,
+Kubernetes kills and restarts the container. Use this to escape deadlocks or
+memory corruption that the app cannot recover from on its own. Be careful: a
+liveness probe that is too aggressive (too short `initialDelaySeconds`) will
+cause restart loops on startup, which is worse than no probe.
 
-**Path Rewriting** — The annotation `rewrite-target: /$2` strips the `/api`
-prefix before forwarding to the backend. Without this, the backend would
-receive requests as `/api/applicants` instead of `/applicants`. The `$2` capture
-group in the regex `(/api)(/|$)(.*)` captures everything after `/api`.
+**Startup Probe** — A one-time probe that runs only at startup. While it is
+active, liveness and readiness checks are suspended. This is ideal for
+applications that take a long time to initialize (e.g., loading a large model
+or running database migrations). Set `failureThreshold * periodSeconds` to the
+maximum acceptable startup time.
 
 ## Next Class Preview
-Class 20 dives into Liveness and Readiness probes — the Kubernetes mechanism
-that determines whether your pod is healthy and ready to accept traffic,
-enabling true zero-downtime deployments.
+Class 21 introduces Rolling Updates and Horizontal Pod Autoscaling — how to
+deploy new versions with zero downtime and automatically scale your pods up and
+down based on CPU load.
