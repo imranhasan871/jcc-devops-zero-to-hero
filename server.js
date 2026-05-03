@@ -3,9 +3,23 @@
 const express = require('express');
 const path = require('path');
 const { Pool } = require('pg');
+const crypto = require('crypto');
 const config = require('./config');
 
-// --- Prometheus metrics (simple text format, no extra library needed) ---
+// ---------------------------------------------------------------------------
+// Structured JSON logger — class-39: all output is JSON on stdout.
+// Loki/Promtail scrapes stdout, parses JSON, and indexes level + requestId.
+// ---------------------------------------------------------------------------
+function log(level, msg, extra = {}) {
+  process.stdout.write(JSON.stringify({
+    level,
+    msg,
+    timestamp: new Date().toISOString(),
+    ...extra,
+  }) + '\n');
+}
+
+// Prometheus metrics
 let requestCount = 0;
 const requestsByRoute = {};
 function metricsMiddleware(req, res, next) {
@@ -22,26 +36,38 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(metricsMiddleware);
 
-// Prometheus text-format metrics endpoint
+app.use((req, res, next) => {
+  req.requestId = crypto.randomUUID();
+  res.setHeader('X-Request-Id', req.requestId);
+  log('info', 'request received', { requestId: req.requestId, method: req.method, path: req.path });
+  const start = Date.now();
+  res.on('finish', () => {
+    log('info', 'request completed', {
+      requestId: req.requestId,
+      method: req.method,
+      path: req.path,
+      status: res.statusCode,
+      duration: Date.now() - start,
+    });
+  });
+  next();
+});
+
 app.get('/metrics', (req, res) => {
   const uptime = process.uptime();
   const heap = process.memoryUsage().heapUsed;
   let body = `# HELP jcc_requests_total Total HTTP requests received\n`;
-  body += `# TYPE jcc_requests_total counter\n`;
-  body += `jcc_requests_total ${requestCount}\n\n`;
+  body += `# TYPE jcc_requests_total counter\njcc_requests_total ${requestCount}\n\n`;
   body += `# HELP jcc_uptime_seconds Server uptime in seconds\n`;
-  body += `# TYPE jcc_uptime_seconds gauge\n`;
-  body += `jcc_uptime_seconds ${uptime.toFixed(2)}\n\n`;
+  body += `# TYPE jcc_uptime_seconds gauge\njcc_uptime_seconds ${uptime.toFixed(2)}\n\n`;
   body += `# HELP jcc_heap_bytes Node.js heap memory used\n`;
-  body += `# TYPE jcc_heap_bytes gauge\n`;
-  body += `jcc_heap_bytes ${heap}\n\n`;
+  body += `# TYPE jcc_heap_bytes gauge\njcc_heap_bytes ${heap}\n\n`;
   Object.entries(requestsByRoute).forEach(([route, count]) => {
     body += `jcc_requests_by_route{route="${route}"} ${count}\n`;
   });
   res.set('Content-Type', 'text/plain; version=0.0.4').send(body);
 });
 
-// PostgreSQL connection pool
 const pool = new Pool({
   host:     process.env.DB_HOST     || 'localhost',
   port:     parseInt(process.env.DB_PORT || '5432', 10),
@@ -50,34 +76,37 @@ const pool = new Pool({
   password: process.env.DB_PASSWORD || 'secret',
 });
 
-// Health check
 app.get('/health', async (req, res) => {
   try {
     await pool.query('SELECT 1');
+    log('info', 'health check ok', { requestId: req.requestId });
     res.json({ status: 'ok', db: 'connected', timestamp: new Date().toISOString() });
   } catch (err) {
+    log('error', 'health check failed', { requestId: req.requestId, error: err.message });
     res.status(503).json({ status: 'error', db: 'disconnected', error: err.message });
   }
 });
 
-// Programs
 app.get('/api/programs', async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM programs ORDER BY id');
+    log('info', 'programs fetched', { requestId: req.requestId, count: rows.length });
     res.json(rows);
   } catch (err) {
+    log('error', 'programs fetch failed', { requestId: req.requestId, error: err.message });
     res.status(500).json({ error: err.message });
   }
 });
 
-// Applicants
 app.get('/api/applicants', async (req, res) => {
   try {
     const { rows } = await pool.query(
       'SELECT a.*, p.name AS program_name FROM applicants a LEFT JOIN programs p ON a.program_id = p.id ORDER BY a.id'
     );
+    log('info', 'applicants fetched', { requestId: req.requestId, count: rows.length });
     res.json(rows);
   } catch (err) {
+    log('error', 'applicants fetch failed', { requestId: req.requestId, error: err.message });
     res.status(500).json({ error: err.message });
   }
 });
@@ -85,6 +114,7 @@ app.get('/api/applicants', async (req, res) => {
 app.post('/api/applicants', async (req, res) => {
   const { name, email, program_id } = req.body;
   if (!name || !email) {
+    log('warn', 'applicant create rejected — missing fields', { requestId: req.requestId });
     return res.status(400).json({ error: 'name and email are required' });
   }
   try {
@@ -92,28 +122,32 @@ app.post('/api/applicants', async (req, res) => {
       'INSERT INTO applicants (name, email, program_id) VALUES ($1, $2, $3) RETURNING *',
       [name, email, program_id || null]
     );
+    log('info', 'applicant created', { requestId: req.requestId, id: rows[0].id });
     res.status(201).json(rows[0]);
   } catch (err) {
     if (err.code === '23505') {
+      log('warn', 'applicant create conflict — duplicate email', { requestId: req.requestId });
       return res.status(409).json({ error: 'Email already registered' });
     }
+    log('error', 'applicant create failed', { requestId: req.requestId, error: err.message });
     res.status(500).json({ error: err.message });
   }
 });
 
-// Events
 app.get('/api/events', async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM events ORDER BY event_date');
+    log('info', 'events fetched', { requestId: req.requestId, count: rows.length });
     res.json(rows);
   } catch (err) {
+    log('error', 'events fetch failed', { requestId: req.requestId, error: err.message });
     res.status(500).json({ error: err.message });
   }
 });
 
 const PORT = config.port || 3000;
 app.listen(PORT, () => {
-  console.log(`JCC server running on port ${PORT}`);
+  log('info', 'JCC server started', { port: PORT });
 });
 
 module.exports = app;

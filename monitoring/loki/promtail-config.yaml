@@ -1,0 +1,66 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: jcc-pods
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: jcc
+          __path__: /var/log/containers/*jcc*.log
+    pipeline_stages:
+      - docker: {}
+      - json:
+          expressions:
+            level:     level
+            msg:       msg
+            timestamp: timestamp
+            requestId: requestId
+            method:    method
+            path:      path
+            status:    status
+            duration:  duration
+      - labels:
+          level:
+          requestId:
+      - timestamp:
+          source: timestamp
+          format: RFC3339
+
+  - job_name: kubernetes-pods
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - jcc-production
+            - jcc-dev
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        target_label: app
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+      - source_labels: [__meta_kubernetes_pod_container_name]
+        target_label: container
+      - source_labels: [__meta_kubernetes_pod_node_name]
+        target_label: node
+    pipeline_stages:
+      - docker: {}
+      - json:
+          expressions:
+            level:     level
+            msg:       msg
+            requestId: requestId
+      - labels:
+          level:
+          app:
+          namespace:
