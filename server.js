@@ -1,0 +1,70 @@
+'use strict';
+
+const express = require('express');
+const path    = require('path');
+const app     = express();
+
+// ── Middleware ────────────────────────────────────────────────────────────────
+app.use(express.json());
+app.use(express.static(path.join(__dirname, '.')));
+
+// ── In-memory store ───────────────────────────────────────────────────────────
+const programs = [
+  { id: 1, name: 'Fashion Modeling',     duration: '6 months', seats: 20 },
+  { id: 2, name: 'Commercial Acting',    duration: '4 months', seats: 15 },
+  { id: 3, name: 'Personal Development', duration: '3 months', seats: 30 },
+  { id: 4, name: 'Runway & Posing',      duration: '5 months', seats: 12 },
+];
+
+let applicants = [];
+let nextId = 1;
+
+// ── Routes ────────────────────────────────────────────────────────────────────
+
+// Health check — useful for load balancers and Docker health checks later
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', uptime: process.uptime(), timestamp: new Date().toISOString() });
+});
+
+// Programs
+app.get('/api/programs', (req, res) => {
+  res.json(programs);
+});
+
+// Applicants — list
+app.get('/api/applicants', (req, res) => {
+  res.json(applicants);
+});
+
+// Applicants — create
+app.post('/api/applicants', (req, res) => {
+  const { name, email, programId } = req.body;
+
+  if (!name || !email || !programId) {
+    return res.status(400).json({ error: 'name, email, and programId are required' });
+  }
+
+  const program = programs.find(p => p.id === Number(programId));
+  if (!program) {
+    return res.status(400).json({ error: `Program ${programId} not found` });
+  }
+
+  const applicant = {
+    id: nextId++,
+    name: name.trim(),
+    email: email.trim().toLowerCase(),
+    programId: Number(programId),
+    programName: program.name,
+    appliedAt: new Date().toISOString(),
+  };
+
+  applicants.push(applicant);
+  res.status(201).json(applicant);
+});
+
+// ── Start ─────────────────────────────────────────────────────────────────────
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`JCC server listening on http://localhost:${PORT}`);
+  console.log(`Health: http://localhost:${PORT}/health`);
+});

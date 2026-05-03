@@ -29,6 +29,7 @@
     .badge { display: inline-block; background: #e0f0ff; color: #0066cc;
              font-size: 0.75rem; padding: 0.1rem 0.5rem; border-radius: 10px; margin-left: 0.5rem; }
     .empty-msg { color: #999; font-style: italic; }
+    .error-msg { color: #cc0000; font-size: 0.9rem; margin-bottom: 0.5rem; }
   </style>
 </head>
 <body>
@@ -38,17 +39,16 @@
   </header>
 
   <main>
-    <!-- Programs -->
     <section>
       <h2>Available Programs</h2>
       <div class="programs-grid" id="programs-grid">
-        <!-- populated by JS -->
+        <p class="empty-msg">Loading programs…</p>
       </div>
     </section>
 
-    <!-- Application Form -->
     <section>
       <h2>Apply Now</h2>
+      <p id="form-error" class="error-msg" style="display:none;"></p>
       <form id="application-form">
         <label for="name">Full Name</label>
         <input type="text" id="name" placeholder="Jane Doe" required />
@@ -65,97 +65,90 @@
       </form>
     </section>
 
-    <!-- Applicants List -->
     <section>
       <h2>Applicants</h2>
       <ul class="applicant-list" id="applicant-list">
-        <li class="empty-msg">No applicants yet.</li>
+        <li class="empty-msg">Loading…</li>
       </ul>
     </section>
   </main>
 
   <script>
-    // ── Data ──────────────────────────────────────────────────────────────────
-    const PROGRAMS = [
-      { id: 1, name: "Fashion Modeling",     duration: "6 months",  seats: 20 },
-      { id: 2, name: "Commercial Acting",    duration: "4 months",  seats: 15 },
-      { id: 3, name: "Personal Development", duration: "3 months",  seats: 30 },
-      { id: 4, name: "Runway & Posing",      duration: "5 months",  seats: 12 },
-    ];
-
-    const STORAGE_KEY = "jcc_applicants";
-
-    function loadApplicants() {
-      try {
-        return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
-      } catch (e) {
-        return [];
+    // ── API helpers ───────────────────────────────────────────────────────────
+    async function apiFetch(path, options = {}) {
+      const res = await fetch(path, {
+        headers: { 'Content-Type': 'application/json' },
+        ...options,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
       }
-    }
-
-    function saveApplicants(list) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+      return res.json();
     }
 
     // ── Render programs ───────────────────────────────────────────────────────
-    function renderPrograms() {
-      const grid = document.getElementById("programs-grid");
-      const select = document.getElementById("program");
-      grid.innerHTML = "";
-      select.innerHTML = '<option value="">-- Choose a program --</option>';
-
-      PROGRAMS.forEach(p => {
-        // card
-        const card = document.createElement("div");
-        card.className = "program-card";
-        card.innerHTML = `<h3>${p.name}</h3>
-          <p>Duration: ${p.duration}</p>
-          <p>Seats: ${p.seats}</p>`;
-        grid.appendChild(card);
-
-        // dropdown option
-        const opt = document.createElement("option");
-        opt.value = p.id;
-        opt.textContent = p.name;
-        select.appendChild(opt);
-      });
+    async function renderPrograms() {
+      const grid   = document.getElementById('programs-grid');
+      const select = document.getElementById('program');
+      try {
+        const programs = await apiFetch('/api/programs');
+        grid.innerHTML = '';
+        select.innerHTML = '<option value="">-- Choose a program --</option>';
+        programs.forEach(p => {
+          grid.insertAdjacentHTML('beforeend', `
+            <div class="program-card">
+              <h3>${p.name}</h3>
+              <p>Duration: ${p.duration}</p>
+              <p>Seats: ${p.seats}</p>
+            </div>`);
+          select.insertAdjacentHTML('beforeend',
+            `<option value="${p.id}">${p.name}</option>`);
+        });
+      } catch (err) {
+        grid.innerHTML = `<p class="error-msg">Failed to load programs: ${err.message}</p>`;
+      }
     }
 
     // ── Render applicants ─────────────────────────────────────────────────────
-    function renderApplicants() {
-      const ul = document.getElementById("applicant-list");
-      const applicants = loadApplicants();
-
-      if (applicants.length === 0) {
-        ul.innerHTML = '<li class="empty-msg">No applicants yet.</li>';
-        return;
+    async function renderApplicants() {
+      const ul = document.getElementById('applicant-list');
+      try {
+        const applicants = await apiFetch('/api/applicants');
+        if (applicants.length === 0) {
+          ul.innerHTML = '<li class="empty-msg">No applicants yet.</li>';
+          return;
+        }
+        ul.innerHTML = applicants.map(a =>
+          `<li><strong>${a.name}</strong> — ${a.email}
+           <span class="badge">${a.programName}</span></li>`
+        ).join('');
+      } catch (err) {
+        ul.innerHTML = `<li class="error-msg">Failed to load applicants: ${err.message}</li>`;
       }
-
-      ul.innerHTML = applicants.map(a => {
-        const prog = PROGRAMS.find(p => p.id === Number(a.programId));
-        return `<li>
-          <strong>${a.name}</strong> — ${a.email}
-          <span class="badge">${prog ? prog.name : "Unknown"}</span>
-        </li>`;
-      }).join("");
     }
 
     // ── Form submit ───────────────────────────────────────────────────────────
-    document.getElementById("application-form").addEventListener("submit", function(e) {
+    document.getElementById('application-form').addEventListener('submit', async function(e) {
       e.preventDefault();
-      const name      = document.getElementById("name").value.trim();
-      const email     = document.getElementById("email").value.trim();
-      const programId = document.getElementById("program").value;
+      const errEl = document.getElementById('form-error');
+      errEl.style.display = 'none';
 
-      if (!name || !email || !programId) return;
+      const name      = document.getElementById('name').value.trim();
+      const email     = document.getElementById('email').value.trim();
+      const programId = document.getElementById('program').value;
 
-      const applicants = loadApplicants();
-      applicants.push({ id: Date.now(), name, email, programId, appliedAt: new Date().toISOString() });
-      saveApplicants(applicants);
-
-      this.reset();
-      renderApplicants();
-      alert(`Application submitted for ${name}!`);
+      try {
+        await apiFetch('/api/applicants', {
+          method: 'POST',
+          body: JSON.stringify({ name, email, programId }),
+        });
+        this.reset();
+        await renderApplicants();
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.style.display = 'block';
+      }
     });
 
     // ── Init ──────────────────────────────────────────────────────────────────

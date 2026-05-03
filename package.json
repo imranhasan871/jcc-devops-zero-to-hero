@@ -1,0 +1,12 @@
+{
+  "name": "john-casablancas-platform",
+  "version": "1.0.0",
+  "description": "Applicant management platform for John Casablancas Centers",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
