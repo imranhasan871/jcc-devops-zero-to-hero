@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: jcc-dev
+  namespace: argocd
+  labels:
+    environment: dev
+spec:
+  project: jcc
+  source:
+    repoURL: https://github.com/imranhasan871/jcc-devops-zero-to-hero
+    targetRevision: class-24
+    path: k8s/
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: jcc-dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground

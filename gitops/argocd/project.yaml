@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: jcc
+  namespace: argocd
+spec:
+  description: JCC DevOps zero-to-hero platform project
+  sourceRepos:
+    - https://github.com/imranhasan871/jcc-devops-zero-to-hero
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: jcc-dev
+    - server: https://kubernetes.default.svc
+      namespace: jcc-production
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+  roles:
+    - name: read-only
+      description: Read-only access for developers
+      policies:
+        - p, proj:jcc:read-only, applications, get, jcc/*, allow
