@@ -1,54 +1,62 @@
-# Class 03 — Project Structure & Git Hygiene
+# Class 04 — Environment Configuration
 
 ## Objective
-A working app is not the same as a well-organized project. In this class we apply the
-most fundamental DevOps habit: making sure the repository itself is clean, navigable,
-and trustworthy. We add a `.gitignore` to stop tracking generated files, move source
-files to a logical directory layout, and write a `README.md` so that any developer
-(or your future self) can understand and run the project in under two minutes.
+Hard-coding values like port numbers and database URLs inside source files is one of the
+most common mistakes in early-stage projects. The moment you want to run the same code in
+development, staging, and production — with different databases, different ports, different
+log levels — you need a disciplined way to inject those values from outside the code. This
+class introduces the environment variable pattern, the `.env.example` convention, and a
+centralised `config.js` module.
 
 ## What You'll Learn
-- Why committing `node_modules/` to git is a serious mistake
-- How `.gitignore` patterns work and what belongs in one
-- How to structure a Node.js project into logical directories
-- How to write a README that is genuinely useful (not just a formality)
-- The principle: the repository should be the source of truth, not a dumping ground
+- What environment variables are and why they exist
+- The `.env` / `.env.example` convention (what to commit vs. what to keep secret)
+- How to centralise all configuration in one module
+- How `dotenv` loads a `.env` file into `process.env` at startup
+- The 12-Factor App principle #3: "Store config in the environment"
 
 ## What Changed in This Class
-- Added `.gitignore` — excludes `node_modules/`, `.env`, `build/`, OS noise
-- Added `README.md` — project overview, directory structure, setup instructions, API table
-- Moved `index.html` → `public/index.html` (separating static assets from server code)
-- Updated `server.js` — `express.static` now serves from `public/` directory
+- Added `.env.example` — documents every variable the app supports; safe to commit
+- Added `config.js` — reads `process.env`, applies defaults, exports a plain object
+- Updated `server.js` — imports `config` instead of reading `process.env.PORT` directly
+- Updated `package.json` — added `dotenv` as a dependency
+- `.env` is listed in `.gitignore` — it is never committed
 
 ## Hands-On Exercise
-1. Check what git was previously tracking: `git log --oneline --name-only`.
-2. After this commit, run `git status` inside the project. Notice `node_modules/` no longer appears.
-3. Run `npm install` to create `node_modules/`, then run `git status` again — git ignores it.
-4. Try to force-add it: `git add node_modules/`. Git still respects `.gitignore`.
-5. Inspect the directory: you should now see `public/index.html` instead of `index.html`.
-6. Start the server (`npm start`) and confirm `http://localhost:3000` still works — the
-   app is unchanged; only the layout changed.
-7. Read the README out loud as if you are a new developer joining the project. Is anything
-   unclear? That is your signal to improve it.
+1. Copy the example file: `cp .env.example .env`
+2. Edit `.env`, change `PORT=3000` to `PORT=4000`.
+3. Update `server.js` to load dotenv at the very top:
+   ```js
+   require('dotenv').config();
+   const config = require('./config');
+   ```
+4. Run `npm install && npm start`. Confirm the server starts on port 4000.
+5. Now start the server without the `.env` file: `mv .env .env.bak && npm start`.
+   The server falls back to the default port 3000. Restore with `mv .env.bak .env`.
+6. Set a variable inline without `.env`: `PORT=5000 npm start`. This overrides `.env`.
+   (Environment variables set in the shell take precedence over `.env` file values.)
+7. Hit `/health` and confirm `"env": "development"` appears in the response.
 
 ## Key Concepts
 
-**`.gitignore` patterns**: Git reads `.gitignore` from the repo root (and any subdirectory).
-A trailing slash (`node_modules/`) matches only directories. A leading slash (`/build`) anchors
-the pattern to the root. An asterisk matches any string except `/`. You can override an
-ignored pattern with `!` (e.g., `!important-build-artifact`).
+**Environment variables**: Key-value pairs injected into a process by the operating system
+or the shell. In Node.js they are accessible via `process.env.VARIABLE_NAME`. They are the
+standard mechanism for passing secrets and environment-specific settings without touching
+source code. This is how Docker, Kubernetes, CI/CD pipelines, and cloud platforms
+(Heroku, Railway, AWS ECS) all pass configuration to running containers.
 
-**`node_modules/` in git**: The `node_modules/` directory can contain tens of thousands of
-files and hundreds of megabytes. Committing it makes every `git clone` and `git pull`
-drastically slower, bloats the repository history permanently, and creates merge conflicts
-that are essentially impossible to resolve. The `package.json` + `package-lock.json` files
-are the source of truth — `npm install` always recreates the exact same tree from them.
+**`.env.example` vs `.env`**: `.env.example` is a template that lives in the repository —
+it documents every variable the app expects, with safe placeholder values. The actual `.env`
+file contains real values (possibly secrets) and is listed in `.gitignore` so it is never
+committed. Every developer copies `.env.example` to `.env` and fills in their local values.
+This pattern prevents secrets from leaking into git history while ensuring no variable is
+ever undiscovered.
 
-**Separation of concerns in directory layout**: Placing static frontend files in `public/`
-and server code in the root (or a `src/` directory) makes it immediately clear what is
-served to browsers versus what runs on the server. This distinction becomes critical when
-we add a Dockerfile — we want to be intentional about what goes into the image.
+**Centralised `config.js`**: Instead of calling `process.env.X` scattered throughout the
+codebase, a single module reads all variables and exports a plain object. This means type
+coercion (e.g., `parseInt`) and default values are applied in one place, and you can see
+all configuration at a glance without grepping the entire codebase.
 
 ## Next Class Preview
-We introduce environment configuration so the server's port, database URL, and other
-settings can be changed without editing source code.
+We add npm scripts for common developer tasks and a `Makefile` so the project can be
+operated with short, memorable commands regardless of the underlying tool.

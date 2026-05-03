@@ -2,11 +2,13 @@
 
 const express = require('express');
 const path    = require('path');
-const app     = express();
+const config  = require('./config');   // <── uses centralised config
+
+const app = express();
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));   // <── serves from public/
+app.use(express.static(path.join(__dirname, 'public')));
 
 // ── In-memory store ───────────────────────────────────────────────────────────
 const programs = [
@@ -21,7 +23,12 @@ let nextId = 1;
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime(), timestamp: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    env: config.nodeEnv,
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+  });
 });
 
 app.get('/api/programs', (req, res) => {
@@ -58,7 +65,6 @@ app.post('/api/applicants', (req, res) => {
 });
 
 // ── Start ─────────────────────────────────────────────────────────────────────
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`JCC server listening on http://localhost:${PORT}`);
+app.listen(config.port, () => {
+  console.log(`JCC server [${config.nodeEnv}] listening on http://localhost:${config.port}`);
 });
