@@ -1,59 +1,157 @@
-# Class 05 — npm Scripts & Makefile
+# Class 05 — Four Developers, Four Ways to Run the Same App
 
-## Objective
-As a project grows, the number of commands a developer needs to remember grows with it.
-"How do I start the dev server? How do I run the linter? How do I clean up?" Without a
-standard interface, each developer remembers different things and onboarding takes longer
-than it should. This class establishes two complementary tools: `npm scripts` for
-Node.js-native tasks, and a `Makefile` as a universal command façade that works regardless
-of the underlying language or toolchain.
+## The Scenario
 
-## What You'll Learn
-- How npm scripts work and why they are preferred over global tools for project tasks
-- The role of `nodemon` for development: automatic server restart on file changes
-- The basics of `eslint` for code quality enforcement
-- What a `Makefile` is and why it is still widely used in modern DevOps toolchains
-- How to write a self-documenting `Makefile` with a `help` target
+The team has grown to four developers. You open Slack on Monday morning to a thread that
+has been running all weekend:
 
-## What Changed in This Class
-- Updated `package.json` — added `start`, `dev`, `lint`, `test` scripts; added `devDependencies`
-- Added `.eslintrc.json` — ESLint configuration: no-var, prefer-const, strict equality, single quotes
-- Added `Makefile` — targets: `install`, `dev`, `start`, `lint`, `test`, `clean`, `help`
+> **Dev A:** "I just run `node server.js`"
+> **Dev B:** "I use `npm start`, that's what package.json says"
+> **Dev C:** "I run `nodemon server.js --watch src/` so it auto-reloads"
+> **Dev D:** "I installed nodemon globally last year so I just type `nodemon`"
 
-## Hands-On Exercise
-1. Run `make help` to see all available targets.
-2. Run `make install` to install dependencies (including new devDependencies).
-3. Run `make dev` to start the server with nodemon. Edit `server.js` — change the console
-   log message and save. Notice nodemon automatically restarts the server.
-4. Run `make lint` to check for code quality issues.
-5. Intentionally introduce a lint error: add `var x = 1` to `server.js`, run `make lint`,
-   observe the error, then remove it.
-6. Run `make test` — it passes with no tests yet (`--passWithNoTests` flag).
-7. Run `make clean` to delete `node_modules/`, then `make install` to restore.
-8. Compare: `npm run dev` vs `make dev`. Both do the same thing — `make` is just a
-   language-agnostic wrapper that future team members (Python, Go, etc.) can also use.
+A bug is reported on staging. Nobody can reproduce it locally because nobody is running
+the same thing. Dev D's machine has nodemon `2.0.6`; Dev C's has `3.1.0`. Dev B's
+`npm start` does not watch for file changes so she has been restarting manually and
+missing errors in the restart logs. The onboarding doc says "run the app" without
+specifying how. Three of the four developers had to ask someone on Slack before they
+could start working on their first day.
 
-## Key Concepts
+## The Problem
 
-**npm scripts**: The `"scripts"` section of `package.json` defines short aliases that run
-via `npm run <name>`. They automatically add `node_modules/.bin` to the PATH, so locally
-installed tools (like `eslint`, `nodemon`, `jest`) can be called by name without a full
-path or global install. This means every developer gets the exact same version of every
-tool, controlled by `package.json`.
+There is no single source of truth for developer workflows. Every task — install, start,
+develop with hot-reload, lint, test, clean — has multiple competing invocations. New
+developers either guess or interrupt a senior. When a CI system needs to run lint before
+merging a PR, there is no reliable command to call. The team cannot agree on lint rules,
+so code review devolves into style arguments rather than logic review.
 
-**nodemon**: A development-only process monitor that watches your files for changes and
-automatically restarts the Node.js process. Without it, you must `Ctrl+C` and re-run
-`node server.js` after every code change. Nodemon is listed under `devDependencies` because
-it is never needed in production — in production the process is managed by Docker or a
-process manager.
+## Your Mission
 
-**Makefile**: Originally designed for C build systems, `make` is now used across almost
-every language ecosystem as a task runner. Its advantages are universal: no runtime
-required, tab-indented recipes are explicit, `.PHONY` targets prevent confusion with
-same-named files, and the convention is so well understood that any DevOps engineer can
-read a Makefile without explanation. Many CI/CD systems call `make test` and `make build`
-as their primary entry points.
+- Create a `Makefile` at the project root. It must be the single authoritative interface
+  for all developer tasks. Every common workflow must be reachable via `make <target>`.
+- The `Makefile` must implement these targets: `install`, `start`, `dev`, `lint`, `test`,
+  `clean`, and `help`. Every target must have a one-line comment (`##`) so `make help`
+  can display it automatically.
+- `make help` must print all available targets and their descriptions without requiring
+  any external tool. The output must be readable by a developer who has never seen the
+  project before.
+- `make dev` must start the server with automatic file-watching and restart. `nodemon`
+  must be a project-local `devDependency` — not a global install. `make dev` must work
+  identically on any machine immediately after `make install`, with no manual global
+  installation step.
+- Configure ESLint (`.eslintrc.json`) to enforce: `no-var` (use `const`/`let`), `prefer-const`,
+  `no-console` at the `warn` level, and `eqeqeq` (strict equality only). `make lint`
+  must exit with code `1` if ESLint finds any violations. It must exit `0` on clean code.
+- `npm test` (and therefore `make test`) must exit `0` even though there are no test files
+  yet. The test runner must be configured with `--passWithNoTests` or equivalent.
 
-## Next Class Preview
-We write our first `Dockerfile`, containerising the application so it can run identically
-on any machine with Docker installed.
+## What You Need to Know First
+
+- **`Makefile` syntax** — a `Makefile` consists of targets, dependencies, and recipes.
+  Each recipe line must be indented with a real tab character (not spaces — make will fail
+  with a cryptic error). `.PHONY` declares targets that are not files.
+- **`make help` pattern** — the common approach is to add `##` comments after each target
+  definition, then use `grep` and `awk` in the `help` recipe to extract and format them
+  automatically. Example: `grep -E '^[a-zA-Z_-]+:.*?## .*$$' Makefile | awk ...`
+- **`npm scripts` and PATH** — the `"scripts"` section of `package.json` adds
+  `node_modules/.bin` to `PATH` automatically. This means a locally-installed `nodemon`
+  (under `node_modules/.bin/nodemon`) can be referenced by name in an npm script without
+  a full path. A `Makefile` target can call `npm run dev` to leverage this behaviour.
+- **ESLint configuration** — `.eslintrc.json` accepts a `"rules"` object. Each rule value
+  is either `"off"`, `"warn"`, or `"error"` (or `0`, `1`, `2`). Rules set to `"error"`
+  cause ESLint to exit non-zero. Rules set to `"warn"` print warnings but exit `0`.
+- **`devDependencies`** — packages in `devDependencies` are installed by `npm install` but
+  are excluded when `npm install --omit=dev` is run (which is what production Docker builds
+  do). Tools like `nodemon` and `eslint` belong here — they are never needed on the server.
+
+## Constraints
+
+- `make dev` must auto-restart on file changes WITHOUT requiring global nodemon. Running
+  `make dev` on a machine where nodemon is not globally installed (after `make install`)
+  must work. The examiner will test this by unsetting `PATH` entries for global npm bins.
+- `make lint` must exit non-zero when there is a lint violation. The examiner will
+  introduce a `var` statement into `server.js` and run `make lint` — it must fail.
+- All tab characters in the `Makefile` must be real tab characters (`\t`), not sequences
+  of spaces. The examiner will run `cat -A Makefile | grep '^\^I'` to verify.
+- Do not add a `.npmrc` or modify any global npm configuration. The solution must work
+  in a clean npm environment.
+
+## Verification
+
+```bash
+# make help must print all targets
+make help
+# must list: install, start, dev, lint, test, clean (at minimum)
+
+# make install must run npm install
+make install
+# must exit 0 and create node_modules/
+
+# lint must pass on clean code
+make lint
+# must exit 0
+echo "lint exit code: $?"
+
+# lint must fail when code is dirty
+echo "var x = 1" >> server.js
+make lint
+echo "lint exit code: $?"   # must output: lint exit code: 1
+git checkout server.js       # restore
+
+# test must pass with no test files
+make test
+echo "test exit code: $?"   # must output: test exit code: 0
+
+# Verify Makefile uses real tabs (not spaces)
+cat -A Makefile | grep recipe_line_example   # look for ^I (tab) not spaces
+
+# make dev must start without global nodemon
+# (run this in a shell where which nodemon returns nothing)
+make dev &
+sleep 2
+curl -s http://localhost:3000/health | grep '"status":"ok"'
+kill %1
+```
+
+## Stretch Challenge
+
+Add a `make check` target that runs all three of the following in sequence and exits `0`
+only if all three pass:
+
+1. `make lint` — ESLint must find zero violations.
+2. `make test` — all tests must pass.
+3. A grep check that asserts `server.js` contains no `console.log` statements (use
+   `grep -n "console\.log" server.js` — if it returns any output, `make check` must fail).
+
+`make check` is what the CI pipeline will call on every pull request. If any step fails,
+the build fails.
+
+## Instructor Notes
+
+The Makefile is the contract between the developer and the project. It answers the
+question every new team member asks on day one: "How do I run this thing?" Having a
+`make help` that lists every operation means that question can be answered by the project
+itself.
+
+**Why Makefile and not `package.json` scripts?** npm scripts work perfectly for Node.js
+projects. The Makefile layer adds value when:
+- Other engineers (Go, Python, infrastructure) need to operate the project without knowing
+  npm's conventions.
+- CI/CD systems can call `make test` regardless of the underlying language.
+- Teams add non-Node tooling (Docker, Terraform, database migrations) that does not
+  belong in `package.json`.
+
+**Common wrong approaches:**
+
+- Installing nodemon globally in the Makefile with `npm install -g nodemon` — this mutates
+  the developer's system, creates version inconsistencies, and requires elevated permissions
+  in CI containers.
+- Using spaces instead of tabs in the Makefile — make will fail with `*** missing separator`
+  and beginners spend an hour debugging what looks like correct syntax.
+- Setting ESLint rules to `"warn"` when they should be `"error"` — `make lint` exits `0`
+  even with violations, making the lint check useless in CI.
+
+**What this sets up for later:** Every subsequent class adds a target to this Makefile.
+`make docker-build`, `make docker-run`, `make k8s-deploy`. By the final class, `make help`
+is the complete operations manual for the entire platform. Students who skip this class
+find that later classes assume `make` exists and works.
