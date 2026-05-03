@@ -8,81 +8,55 @@ pipeline {
     }
 
     environment {
-        REGISTRY  = 'your-registry.io/jcc'      // change to your registry
-        IMAGE_TAG = "${env.BUILD_NUMBER}"         // unique tag per build
+        REGISTRY  = 'your-registry.io/jcc'
+        IMAGE_TAG = "${env.BUILD_NUMBER}"
+        // 'kubeconfig' is a Jenkins Secret File credential containing your kubeconfig
+        KUBECONFIG = credentials('kubeconfig')
     }
 
     stages {
         stage('Checkout') {
             steps {
                 checkout scm
-                echo "Building ${env.BRANCH_NAME} @ ${env.GIT_COMMIT?.take(8)} as image tag ${IMAGE_TAG}"
             }
         }
 
         stage('Install') {
             steps {
-                dir('backend') {
-                    sh 'npm ci'
-                }
+                dir('backend') { sh 'npm ci' }
             }
         }
 
         stage('Lint') {
             steps {
-                dir('backend') {
-                    sh 'npm run lint'
-                }
+                dir('backend') { sh 'npm run lint' }
             }
         }
 
         stage('Test') {
             steps {
-                dir('backend') {
-                    sh 'npm test'
-                }
+                dir('backend') { sh 'npm test' }
             }
         }
 
-        // Build all three images in parallel to save time
         stage('Build Docker Images') {
             parallel {
-                stage('Backend Image') {
-                    steps {
-                        sh "docker build -t ${REGISTRY}/backend:${IMAGE_TAG} ./backend"
-                        sh "docker tag ${REGISTRY}/backend:${IMAGE_TAG} ${REGISTRY}/backend:latest"
-                    }
-                }
-                stage('Frontend Image') {
-                    steps {
-                        sh "docker build -t ${REGISTRY}/frontend:${IMAGE_TAG} ./frontend"
-                        sh "docker tag ${REGISTRY}/frontend:${IMAGE_TAG} ${REGISTRY}/frontend:latest"
-                    }
-                }
-                stage('Database Image') {
-                    steps {
-                        sh "docker build -t ${REGISTRY}/database:${IMAGE_TAG} ./database"
-                        sh "docker tag ${REGISTRY}/database:${IMAGE_TAG} ${REGISTRY}/database:latest"
-                    }
-                }
+                stage('Backend')  { steps { sh "docker build -t ${REGISTRY}/backend:${IMAGE_TAG} ./backend"   } }
+                stage('Frontend') { steps { sh "docker build -t ${REGISTRY}/frontend:${IMAGE_TAG} ./frontend" } }
+                stage('Database') { steps { sh "docker build -t ${REGISTRY}/database:${IMAGE_TAG} ./database" } }
             }
         }
 
         stage('Security Scan') {
             steps {
-                // TODO: replace this stub with a real Trivy scan:
-                //   sh "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL ${REGISTRY}/backend:${IMAGE_TAG}"
+                // TODO: add trivy scan here
                 echo "TODO: add trivy scan here"
-                echo "Stub: skipping security scan for now"
             }
         }
 
         stage('Push Images') {
-            when {
-                branch 'main'   // only push from the main branch
-            }
+            when { branch 'main' }
             steps {
-                // Jenkins Credentials Binding plugin — never puts secrets in logs
                 withCredentials([usernamePassword(
                     credentialsId: 'registry-credentials',
                     usernameVariable: 'DOCKER_USER',
@@ -90,26 +64,71 @@ pipeline {
                 )]) {
                     sh 'echo $DOCKER_PASS | docker login your-registry.io -u $DOCKER_USER --password-stdin'
                     sh "docker push ${REGISTRY}/backend:${IMAGE_TAG}"
-                    sh "docker push ${REGISTRY}/backend:latest"
                     sh "docker push ${REGISTRY}/frontend:${IMAGE_TAG}"
-                    sh "docker push ${REGISTRY}/frontend:latest"
                     sh "docker push ${REGISTRY}/database:${IMAGE_TAG}"
-                    sh "docker push ${REGISTRY}/database:latest"
                     sh 'docker logout your-registry.io'
                 }
+            }
+        }
+
+        stage('Deploy to Dev') {
+            when { branch 'main' }
+            steps {
+                echo "Deploying build ${IMAGE_TAG} to jcc-dev namespace..."
+                sh """
+                    kubectl set image deployment/backend \
+                        backend=${REGISTRY}/backend:${IMAGE_TAG} \
+                        -n jcc-dev
+                    kubectl set image deployment/frontend \
+                        frontend=${REGISTRY}/frontend:${IMAGE_TAG} \
+                        -n jcc-dev
+                    kubectl rollout status deployment/backend  -n jcc-dev --timeout=120s
+                    kubectl rollout status deployment/frontend -n jcc-dev --timeout=120s
+                """
+                echo "Dev deployment complete — run smoke tests against dev environment"
+            }
+        }
+
+        stage('Approve Production Deploy') {
+            when { branch 'main' }
+            steps {
+                // Pauses the pipeline and waits for a human to click Proceed or Abort.
+                // The build stays in Jenkins and times out after 24 hours if nobody responds.
+                timeout(time: 24, unit: 'HOURS') {
+                    input message: "Deploy build ${IMAGE_TAG} to PRODUCTION?",
+                          ok: 'Deploy to Production',
+                          submitter: 'admin,release-manager'  // only these users can approve
+                }
+            }
+        }
+
+        stage('Deploy to Production') {
+            when { branch 'main' }
+            steps {
+                echo "Deploying build ${IMAGE_TAG} to jcc-production namespace..."
+                sh """
+                    kubectl set image deployment/backend \
+                        backend=${REGISTRY}/backend:${IMAGE_TAG} \
+                        -n jcc-production
+                    kubectl set image deployment/frontend \
+                        frontend=${REGISTRY}/frontend:${IMAGE_TAG} \
+                        -n jcc-production
+                    kubectl rollout status deployment/backend  -n jcc-production --timeout=300s
+                    kubectl rollout status deployment/frontend -n jcc-production --timeout=300s
+                """
+                echo "Production deployment complete!"
             }
         }
     }
 
     post {
         success {
-            echo "Build #${IMAGE_TAG} complete — images pushed to ${REGISTRY}"
+            echo "Pipeline complete — build ${IMAGE_TAG} is live in production"
         }
         failure {
-            echo "Build #${IMAGE_TAG} FAILED — images NOT pushed"
+            echo "Pipeline FAILED at stage — production was NOT updated"
         }
         always {
-            // Remove local images to free disk on the Jenkins agent
             sh "docker rmi ${REGISTRY}/backend:${IMAGE_TAG} ${REGISTRY}/frontend:${IMAGE_TAG} ${REGISTRY}/database:${IMAGE_TAG} || true"
             cleanWs()
         }
