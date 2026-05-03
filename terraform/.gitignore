@@ -1,0 +1,18 @@
+# State files — NEVER commit these.
+# The state file contains resource IDs and can contain sensitive output values.
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Variable files with real values — NEVER commit these.
+# Use terraform.tfvars.example as a committed template; actual tfvars are local only.
+*.tfvars
+!*.tfvars.example
+
+# Terraform working directory — contains provider binaries and cached modules
+.terraform/
+.terraform.lock.hcl
+
+# Crash logs generated when Terraform panics
+crash.log
+crash.*.log

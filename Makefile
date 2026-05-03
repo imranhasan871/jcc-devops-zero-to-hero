@@ -137,3 +137,22 @@ reliability-status: ## Show PDB disruption allowance and quota consumption
 secrets-validate: ## Validate ExternalSecret sync status
 	kubectl get externalsecret -n jcc-production
 	kubectl describe externalsecret jcc-db-credentials -n jcc-production | grep -A 5 "Status:"
+
+## ── Terraform ────────────────────────────────────────────────────
+tf-init: ## Initialize Terraform and download providers
+	terraform -chdir=terraform init
+
+tf-validate: ## Validate Terraform configuration syntax
+	terraform -chdir=terraform validate
+
+tf-fmt: ## Format all Terraform files
+	terraform -chdir=terraform fmt -recursive
+
+tf-plan: ## Show what Terraform will change (requires TF_VAR_db_password and TF_VAR_environment)
+	terraform -chdir=terraform plan
+
+tf-apply: ## Apply the Terraform plan (prompts for confirmation)
+	terraform -chdir=terraform apply
+
+tf-destroy: ## Destroy all Terraform-managed resources
+	terraform -chdir=terraform destroy
