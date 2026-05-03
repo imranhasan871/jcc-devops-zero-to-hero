@@ -1,25 +1,57 @@
 'use strict';
 
+// ---------------------------------------------------------------------------
+// OpenTelemetry SDK — must initialise BEFORE any other require() calls.
+// class-40: traces every HTTP request and DB query automatically.
+// ---------------------------------------------------------------------------
+const { NodeSDK } = require('@opentelemetry/sdk-node');
+const { getNodeAutoInstrumentations } = require('@opentelemetry/auto-instrumentations-node');
+const { OTLPTraceExporter } = require('@opentelemetry/exporter-trace-otlp-http');
+const { Resource } = require('@opentelemetry/resources');
+const { SEMRESATTRS_SERVICE_NAME, SEMRESATTRS_SERVICE_VERSION } = require('@opentelemetry/semantic-conventions');
+const { trace } = require('@opentelemetry/api');
+
+const sdk = new NodeSDK({
+  resource: new Resource({
+    [SEMRESATTRS_SERVICE_NAME]: 'jcc-backend',
+    [SEMRESATTRS_SERVICE_VERSION]: process.env.APP_VERSION || '1.0.0',
+  }),
+  traceExporter: new OTLPTraceExporter({
+    url: process.env.OTEL_EXPORTER_OTLP_ENDPOINT || 'http://localhost:4318/v1/traces',
+  }),
+  instrumentations: [
+    getNodeAutoInstrumentations({
+      '@opentelemetry/instrumentation-express': { enabled: true },
+      '@opentelemetry/instrumentation-pg':      { enabled: true },
+      '@opentelemetry/instrumentation-http':    { enabled: true },
+    }),
+  ],
+});
+
+sdk.start();
+process.on('SIGTERM', () => sdk.shutdown());
+
 const express = require('express');
 const path = require('path');
 const { Pool } = require('pg');
 const crypto = require('crypto');
 const config = require('./config');
 
-// ---------------------------------------------------------------------------
-// Structured JSON logger — class-39: all output is JSON on stdout.
-// Loki/Promtail scrapes stdout, parses JSON, and indexes level + requestId.
-// ---------------------------------------------------------------------------
+// Structured JSON logger — includes traceId so Loki log lines link to Tempo traces
 function log(level, msg, extra = {}) {
+  const activeSpan = trace.getActiveSpan();
+  const spanContext = activeSpan ? activeSpan.spanContext() : null;
+  const traceId = spanContext ? spanContext.traceId : undefined;
+  const spanId  = spanContext ? spanContext.spanId  : undefined;
   process.stdout.write(JSON.stringify({
     level,
     msg,
     timestamp: new Date().toISOString(),
+    ...(traceId ? { traceId, spanId } : {}),
     ...extra,
   }) + '\n');
 }
 
-// Prometheus metrics
 let requestCount = 0;
 const requestsByRoute = {};
 function metricsMiddleware(req, res, next) {
@@ -39,8 +71,8 @@ app.use(metricsMiddleware);
 app.use((req, res, next) => {
   req.requestId = crypto.randomUUID();
   res.setHeader('X-Request-Id', req.requestId);
-  log('info', 'request received', { requestId: req.requestId, method: req.method, path: req.path });
   const start = Date.now();
+  log('info', 'request received', { requestId: req.requestId, method: req.method, path: req.path });
   res.on('finish', () => {
     log('info', 'request completed', {
       requestId: req.requestId,
@@ -98,7 +130,9 @@ app.get('/api/programs', async (req, res) => {
   }
 });
 
+// GET /api/applicants — the slow endpoint. Trace waterfall shows exactly where time goes.
 app.get('/api/applicants', async (req, res) => {
+  log('info', 'applicants query starting', { requestId: req.requestId });
   try {
     const { rows } = await pool.query(
       'SELECT a.*, p.name AS program_name FROM applicants a LEFT JOIN programs p ON a.program_id = p.id ORDER BY a.id'
@@ -114,7 +148,7 @@ app.get('/api/applicants', async (req, res) => {
 app.post('/api/applicants', async (req, res) => {
   const { name, email, program_id } = req.body;
   if (!name || !email) {
-    log('warn', 'applicant create rejected — missing fields', { requestId: req.requestId });
+    log('warn', 'applicant create rejected', { requestId: req.requestId });
     return res.status(400).json({ error: 'name and email are required' });
   }
   try {
@@ -126,7 +160,7 @@ app.post('/api/applicants', async (req, res) => {
     res.status(201).json(rows[0]);
   } catch (err) {
     if (err.code === '23505') {
-      log('warn', 'applicant create conflict — duplicate email', { requestId: req.requestId });
+      log('warn', 'applicant create conflict', { requestId: req.requestId });
       return res.status(409).json({ error: 'Email already registered' });
     }
     log('error', 'applicant create failed', { requestId: req.requestId, error: err.message });

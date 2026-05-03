@@ -1,49 +1,66 @@
-# Class 39 — Centralized Logging: Grafana Loki + Promtail
+# Class 40 — Distributed Tracing: OpenTelemetry + Grafana Tempo
 
 ## The Scenario
-Production incident. The app was returning errors for 22 minutes. `kubectl logs backend-pod-abc123`
-shows the logs — but the pod has restarted 3 times and those logs are gone. You can only
-see the last pod's logs. You need to search across all pod replicas, across restarts, and
-across the last 48 hours simultaneously. `kubectl logs` cannot do this.
+The JCC platform occasionally takes 8 seconds to respond to `GET /api/applicants`.
+Sometimes fast, sometimes slow. Prometheus shows elevated P99 latency but not why.
+Loki logs show the request came in and went out — nothing between. The slow query
+could be the database, connection pool exhaustion, or a middleware. Without traces,
+you are guessing.
 
 ## The Problem
-Container logs are ephemeral. Pod restarts discard log history. Multiple replicas mean
-multiple separate streams that `kubectl logs` cannot aggregate. When an incident happens
-at 2am, the engineer has no logs from the 20 minutes before the pod crashed — exactly
-the window that contains the root cause.
+Metrics aggregate. Logs are isolated events. Neither can answer: "of this specific
+slow request, which function call consumed 7.8 of the 8 seconds?" That requires a
+trace — a causal chain of timestamped spans from the HTTP handler through every
+function call to the database query and back.
 
 ## Your Mission
-- Start the monitoring stack: `docker compose -f monitoring/docker-compose.monitoring.yml up -d`.
-- Confirm Loki is receiving logs: open Grafana Explore, select Loki datasource.
-- Run `{app="jcc", namespace="jcc-production"} |= "error"` — it must return results.
-- Filter by a specific `requestId` to trace one request end-to-end across all log lines.
-- Verify `level`, `requestId`, `msg`, `duration`, and `status` are independently filterable.
-- Simulate a restart: `kubectl rollout restart deployment/backend -n jcc-production` — confirm Loki has logs from before AND after.
+- Add OpenTelemetry SDK to `server.js` — it must initialise before any other `require()`.
+- Every HTTP request must produce a trace in Tempo with spans for the HTTP handler and each DB query.
+- Every log line must include `traceId` so Loki entries link directly to Tempo traces.
+- Start the full stack: `docker compose -f monitoring/docker-compose.monitoring.yml up -d`.
+- Hit `GET /api/applicants`, find the trace in Grafana Tempo — identify the slowest span.
+- In Loki, find the log line for that request by `requestId`, click "View Trace in Tempo" — it must open the correct trace.
 
 ## Constraints
-- All log output from `server.js` must be structured JSON — no `console.log` with concatenation.
-- Every log line must include `timestamp`, `level`, `msg`, and `requestId`.
-- Promtail must label every log line with `app`, `namespace`, and `pod` from Kubernetes metadata.
+- OpenTelemetry must use the OTLP HTTP exporter pointing at Tempo — no Jaeger, no Zipkin.
+- Auto-instrumentation must cover both Express HTTP routes and `pg` database queries.
+- The `traceId` in log output must be the real OTel trace ID, not a random UUID.
 
 ## Verification
 ```bash
-# Confirm structured JSON output
-node server.js &
-curl -s http://localhost:3000/health
-# Expected: {"level":"info","msg":"request completed","timestamp":"...","status":200,...}
+docker compose -f monitoring/docker-compose.monitoring.yml up -d
+curl http://localhost:3000/api/applicants
 
-# Query Loki
-curl -G http://localhost:3100/loki/api/v1/query_range \
-  --data-urlencode 'query={job="jcc"} |= "error"' \
-  --data-urlencode 'limit=20' | jq '.data.result[].values[][1]'
+# Query Tempo for recent traces
+curl "http://localhost:3200/api/search?service.name=jcc-backend&limit=5" | jq '.traces[0]'
+
+# Confirm traceId in logs
+node server.js &
+curl -s http://localhost:3000/api/applicants
+# Expected: {"level":"info","msg":"applicants fetched","traceId":"abc123...","spanId":"def456..."}
 ```
 
 ## Stretch Challenge
-Create a Grafana panel showing error rate over time:
-`rate({app="jcc"} |= "error" [5m])`. Add an alert that fires when error rate exceeds 1/s.
+Add a manual span around the database query with a custom attribute `db.row_count` set
+to the number of rows returned — make the data volume visible in Tempo span attributes.
 
 ## Instructor Notes
-The moment students query logs that survived a pod restart, the gap in their mental model
-of Kubernetes closes. `kubectl logs` teaches the wrong lesson — it implies logs are
-reliable. Loki teaches the right lesson: logs must be shipped out to survive. The
-requestId correlation plants the seed for the trace correlation in class-40.
+The final class closes the loop that started at class-25 with a single Prometheus endpoint.
+Students who complete the trace-to-log correlation demo have internalised what it means
+to run observable software. The 60-second root-cause walkthrough in
+`docs/observability-guide.md` is the artifact they will reference in production.
+
+---
+
+## You Are Now a DevOps Engineer
+
+```
+class-01  Single HTML file                -> class-40  Full production system
+class-08  Docker multi-stage             -> class-37  Runtime security + Falco
+class-14  Push image to registry        -> class-38  Vault-injected secrets
+class-21  Rolling updates + HPA        -> class-35  GitOps promotion via PR
+class-25  Prometheus dashboard          -> class-40  Metrics + Logs + Traces correlated
+```
+
+You have built, secured, deployed, and can now debug this system end-to-end.
+That is what separates a DevOps engineer from someone who has read about DevOps.
