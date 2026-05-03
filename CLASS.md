@@ -1,62 +1,59 @@
-# Class 04 — Environment Configuration
+# Class 05 — npm Scripts & Makefile
 
 ## Objective
-Hard-coding values like port numbers and database URLs inside source files is one of the
-most common mistakes in early-stage projects. The moment you want to run the same code in
-development, staging, and production — with different databases, different ports, different
-log levels — you need a disciplined way to inject those values from outside the code. This
-class introduces the environment variable pattern, the `.env.example` convention, and a
-centralised `config.js` module.
+As a project grows, the number of commands a developer needs to remember grows with it.
+"How do I start the dev server? How do I run the linter? How do I clean up?" Without a
+standard interface, each developer remembers different things and onboarding takes longer
+than it should. This class establishes two complementary tools: `npm scripts` for
+Node.js-native tasks, and a `Makefile` as a universal command façade that works regardless
+of the underlying language or toolchain.
 
 ## What You'll Learn
-- What environment variables are and why they exist
-- The `.env` / `.env.example` convention (what to commit vs. what to keep secret)
-- How to centralise all configuration in one module
-- How `dotenv` loads a `.env` file into `process.env` at startup
-- The 12-Factor App principle #3: "Store config in the environment"
+- How npm scripts work and why they are preferred over global tools for project tasks
+- The role of `nodemon` for development: automatic server restart on file changes
+- The basics of `eslint` for code quality enforcement
+- What a `Makefile` is and why it is still widely used in modern DevOps toolchains
+- How to write a self-documenting `Makefile` with a `help` target
 
 ## What Changed in This Class
-- Added `.env.example` — documents every variable the app supports; safe to commit
-- Added `config.js` — reads `process.env`, applies defaults, exports a plain object
-- Updated `server.js` — imports `config` instead of reading `process.env.PORT` directly
-- Updated `package.json` — added `dotenv` as a dependency
-- `.env` is listed in `.gitignore` — it is never committed
+- Updated `package.json` — added `start`, `dev`, `lint`, `test` scripts; added `devDependencies`
+- Added `.eslintrc.json` — ESLint configuration: no-var, prefer-const, strict equality, single quotes
+- Added `Makefile` — targets: `install`, `dev`, `start`, `lint`, `test`, `clean`, `help`
 
 ## Hands-On Exercise
-1. Copy the example file: `cp .env.example .env`
-2. Edit `.env`, change `PORT=3000` to `PORT=4000`.
-3. Update `server.js` to load dotenv at the very top:
-   ```js
-   require('dotenv').config();
-   const config = require('./config');
-   ```
-4. Run `npm install && npm start`. Confirm the server starts on port 4000.
-5. Now start the server without the `.env` file: `mv .env .env.bak && npm start`.
-   The server falls back to the default port 3000. Restore with `mv .env.bak .env`.
-6. Set a variable inline without `.env`: `PORT=5000 npm start`. This overrides `.env`.
-   (Environment variables set in the shell take precedence over `.env` file values.)
-7. Hit `/health` and confirm `"env": "development"` appears in the response.
+1. Run `make help` to see all available targets.
+2. Run `make install` to install dependencies (including new devDependencies).
+3. Run `make dev` to start the server with nodemon. Edit `server.js` — change the console
+   log message and save. Notice nodemon automatically restarts the server.
+4. Run `make lint` to check for code quality issues.
+5. Intentionally introduce a lint error: add `var x = 1` to `server.js`, run `make lint`,
+   observe the error, then remove it.
+6. Run `make test` — it passes with no tests yet (`--passWithNoTests` flag).
+7. Run `make clean` to delete `node_modules/`, then `make install` to restore.
+8. Compare: `npm run dev` vs `make dev`. Both do the same thing — `make` is just a
+   language-agnostic wrapper that future team members (Python, Go, etc.) can also use.
 
 ## Key Concepts
 
-**Environment variables**: Key-value pairs injected into a process by the operating system
-or the shell. In Node.js they are accessible via `process.env.VARIABLE_NAME`. They are the
-standard mechanism for passing secrets and environment-specific settings without touching
-source code. This is how Docker, Kubernetes, CI/CD pipelines, and cloud platforms
-(Heroku, Railway, AWS ECS) all pass configuration to running containers.
+**npm scripts**: The `"scripts"` section of `package.json` defines short aliases that run
+via `npm run <name>`. They automatically add `node_modules/.bin` to the PATH, so locally
+installed tools (like `eslint`, `nodemon`, `jest`) can be called by name without a full
+path or global install. This means every developer gets the exact same version of every
+tool, controlled by `package.json`.
 
-**`.env.example` vs `.env`**: `.env.example` is a template that lives in the repository —
-it documents every variable the app expects, with safe placeholder values. The actual `.env`
-file contains real values (possibly secrets) and is listed in `.gitignore` so it is never
-committed. Every developer copies `.env.example` to `.env` and fills in their local values.
-This pattern prevents secrets from leaking into git history while ensuring no variable is
-ever undiscovered.
+**nodemon**: A development-only process monitor that watches your files for changes and
+automatically restarts the Node.js process. Without it, you must `Ctrl+C` and re-run
+`node server.js` after every code change. Nodemon is listed under `devDependencies` because
+it is never needed in production — in production the process is managed by Docker or a
+process manager.
 
-**Centralised `config.js`**: Instead of calling `process.env.X` scattered throughout the
-codebase, a single module reads all variables and exports a plain object. This means type
-coercion (e.g., `parseInt`) and default values are applied in one place, and you can see
-all configuration at a glance without grepping the entire codebase.
+**Makefile**: Originally designed for C build systems, `make` is now used across almost
+every language ecosystem as a task runner. Its advantages are universal: no runtime
+required, tab-indented recipes are explicit, `.PHONY` targets prevent confusion with
+same-named files, and the convention is so well understood that any DevOps engineer can
+read a Makefile without explanation. Many CI/CD systems call `make test` and `make build`
+as their primary entry points.
 
 ## Next Class Preview
-We add npm scripts for common developer tasks and a `Makefile` so the project can be
-operated with short, memorable commands regardless of the underlying tool.
+We write our first `Dockerfile`, containerising the application so it can run identically
+on any machine with Docker installed.

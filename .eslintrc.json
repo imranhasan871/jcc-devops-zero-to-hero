@@ -1,0 +1,18 @@
+{
+  "env": {
+    "node": true,
+    "es2021": true
+  },
+  "parserOptions": {
+    "ecmaVersion": 2021
+  },
+  "rules": {
+    "no-unused-vars":    ["warn", { "argsIgnorePattern": "^_" }],
+    "no-console":         "off",
+    "eqeqeq":            ["error", "always"],
+    "semi":              ["error", "always"],
+    "quotes":            ["warn", "single", { "avoidEscape": true }],
+    "no-var":             "error",
+    "prefer-const":      "warn"
+  }
+}
