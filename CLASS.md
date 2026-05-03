@@ -1,61 +1,99 @@
 # Class 07 — .dockerignore & Layer Caching
 
-## Objective
-A working Dockerfile is not the same as an efficient one. In this class we make two
-targeted improvements: a `.dockerignore` file to exclude irrelevant files from the build
-context, and a reordering of Dockerfile instructions to exploit Docker's layer caching
-mechanism. The result is a build that goes from potentially 60+ seconds down to under
-2 seconds for the common case of "I only changed one line of JavaScript."
+## The Scenario
+The JCC team has adopted Docker and builds the image 20 times a day in CI.
+Each build takes four minutes. The CI bill hit $800 last month. The senior
+engineer looked at the build logs and found that `npm install` re-runs from
+scratch on every single build — even when only a one-line comment changed in
+`server.js`. She has escalated: fix the build pipeline or she is rolling back
+to manual deploys. The fix must bring code-only builds under 30 seconds.
 
-## What You'll Learn
-- What the Docker build context is and why its size matters
-- How `.dockerignore` works (and how it mirrors `.gitignore`)
-- How Docker's layer caching works: what invalidates a cache hit
-- Why instruction order in a Dockerfile is a performance and correctness concern
-- The canonical pattern for caching `npm install` in a Dockerfile
+## The Problem
+Two things are broken. First, the Dockerfile copies all source files before
+running `npm install`, which means any code change invalidates the install
+layer and forces a full re-download of every package. Second, there is no
+`.dockerignore` file, so Docker uploads the entire project directory —
+including `node_modules/` — to the daemon on every build. That context
+transfer alone accounts for 90 seconds of each build.
 
-## What Changed in This Class
-- Added `.dockerignore` — excludes `node_modules/`, `.env`, `.git`, docs, editor noise
-- Updated `Dockerfile` — split `COPY . .` into two steps: copy `package*.json` first,
-  run `npm install`, then copy the rest of the source code
+## Your Mission
+- A build where only `server.js` changes (not `package.json`) must show
+  `CACHED` for the `npm install` step in the build output.
+- The second of two consecutive builds (code change only) must complete in
+  under 30 seconds on a warm machine.
+- The Docker build context reported in the build output must be under 2 MB.
+- The running container must still serve `curl localhost:3000/health`
+  correctly — the optimisation must not break the application.
+- You must paste the build output from both builds (cold and warm) as
+  comments at the top of `.dockerignore`, showing the `CACHED` line and
+  both elapsed times.
 
-## Hands-On Exercise
-1. Build the image once: `docker build -t jcc-platform:class-07 .`
-   Note how long `npm install` takes.
-2. Edit `public/index.html` — change the page title slightly. Save.
-3. Build again: `docker build -t jcc-platform:class-07 .`
-   Observe the output: steps 1-3 (FROM, WORKDIR, COPY package*.json) show "CACHED".
-   The `npm install` step also shows "CACHED". Only the final `COPY . .` runs fresh.
-4. Now edit `package.json` — add a space somewhere. Save.
-5. Build again. This time `npm install` re-runs because `package*.json` changed.
-6. Without `.dockerignore`, check what happens: temporarily rename it, then
-   `docker build -t jcc-platform:no-ignore .` and watch the "Sending build context" line.
-   With `.dockerignore` the context is a few KB; without it, it includes all of
-   `node_modules/` (potentially 50+ MB sent to the Docker daemon every single build).
+## What You Need to Know First
+- **Build context**: The set of files Docker sends to the daemon before
+  executing any instruction. Determined by the directory you pass to
+  `docker build`. Large contexts slow down every build regardless of
+  caching.
+- **`.dockerignore`**: A file listing patterns to exclude from the build
+  context. Same syntax as `.gitignore`.
+- **Image layer**: Each filesystem-modifying instruction (`COPY`, `RUN`,
+  `ADD`) produces an immutable layer. Layers are content-addressed and
+  cached by Docker on the build machine.
+- **Cache invalidation**: If a layer's instruction text or its input files
+  change, Docker discards that layer and all layers below it in the
+  Dockerfile. They cannot be reused even if their own content is unchanged.
+- **Canonical npm-install pattern**: Copy only `package.json` and
+  `package-lock.json` first. Run `npm install`. Then copy the rest of the
+  source. This way `npm install` is only invalidated when the dependency
+  manifest actually changes.
 
-## Key Concepts
+## Constraints
+- You may NOT restructure the application code to make this work — only
+  the Dockerfile and `.dockerignore` are in scope.
+- You must prove the cache is working. The build output showing `CACHED`
+  must be captured and committed as a comment.
+- `node_modules/`, `.git/`, and `.env` must all be excluded from the build
+  context.
+- The final image must behave identically to the class-06 image from the
+  outside — same port, same health endpoint, same response.
 
-**Docker build context**: When you run `docker build .`, Docker sends all files in `.`
-(the build context) to the Docker daemon before executing any instruction. If `node_modules/`
-is not in `.dockerignore`, those hundreds of megabytes are uploaded on every single build —
-even though `RUN npm install` immediately creates its own copy inside the image. The
-`.dockerignore` file tells Docker which files to exclude from the context transfer,
-making the initial step nearly instant.
+## Verification
+```bash
+# Build 1 — cold cache, note the elapsed time
+time docker build -t jcc-app .
 
-**Layer caching and invalidation**: A Docker image is a stack of read-only layers. Each
-instruction that modifies the filesystem (`COPY`, `RUN`, `ADD`) creates one layer. When
-you rebuild, Docker compares each instruction against its cache. If the instruction text
-AND all its inputs are identical to a previous build, Docker reuses the cached layer and
-skips execution. The moment a layer is invalidated (its inputs changed), all layers below
-it are also invalidated — they cannot be reused because their starting point has changed.
-This is why the COPY/RUN order matters so much: `COPY . .` is invalidated on every source
-change, so any `RUN npm install` after it can never be cached.
+# Make a code-only change
+echo "// cache test $(date)" >> server.js
 
-**package*.json glob**: Using `COPY package*.json ./` copies both `package.json` and
-`package-lock.json` (if present) in a single instruction. `package-lock.json` is critical
-because it pins the exact version of every transitive dependency — copying only
-`package.json` would allow minor version drift between builds.
+# Build 2 — must be significantly faster; npm install must show CACHED
+time docker build -t jcc-app .
+# Look for a line like: => CACHED [3/5] RUN npm install ...
 
-## Next Class Preview
-We upgrade to a multi-stage Dockerfile that produces a smaller, more secure production
-image by separating the build environment from the runtime environment.
+# Verify the build context size
+docker build --no-cache --progress=plain -t jcc-app . 2>&1 | grep -i "transferring context"
+# Expected: under 2MB
+
+# Confirm the app still works
+docker run -d -p 3000:3000 --name jcc-cache-test jcc-app
+curl localhost:3000/health
+docker stop jcc-cache-test && docker rm jcc-cache-test
+```
+
+## Stretch Challenge
+Install `dive` (a Docker image layer inspection tool — find it on GitHub).
+Build the class-06 Dockerfile (without cache optimisation) and the class-07
+Dockerfile. Run `dive` on both images. For each image, document: the number
+of layers, the size of the largest layer, and exactly what files it contains.
+Explain in writing which layer is the culprit for most of the wasted space,
+and whether fixing the layer order changes the final image size or only the
+cache hit rate.
+
+## Instructor Notes
+The "$800/month" framing is accurate for a five-person team on a mid-tier CI
+provider building a modest Node app 20 times per day. Students need to
+understand that Dockerfile instruction order is not stylistic — it has direct
+cost implications. The most common mistake is believing that a `.dockerignore`
+alone will fix the cache problem. It will not; it only fixes the context
+transfer time. The canonical COPY-lockfile / RUN-install / COPY-source pattern
+must become muscle memory. The stretch challenge with `dive` introduces layer
+analysis without it being required for the main mission, and previews the
+multi-stage work in Class 08.
